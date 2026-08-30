@@ -1,0 +1,24 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# Dev client
+run/
+
+# Vendored compile-time jars.
+#
+# The build compiles against the exact jars the pack runs, taken straight from the instance --
+# see the Building section of the README for which ones and why. They are third-party mods and
+# 41MB besides, so they are not tracked. Copy them in from
+# curseforge/minecraft/Instances/<pack>/mods/ before building.
+libs/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.classpath
+.project
+.settings/
+bin/

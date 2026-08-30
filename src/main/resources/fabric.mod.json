@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "id": "processsearch",
+  "version": "${version}",
+  "name": "Process Search",
+  "description": "${mod_description}",
+  "license": "${mod_license}",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "dev.processsearch.ProcessSearch"
+    ],
+    "emi": [
+      "dev.processsearch.emi.ProcessSearchEmiPlugin"
+    ],
+    "modmenu": [
+      "dev.processsearch.config.ModMenuIntegration"
+    ]
+  },
+  "mixins": [
+    {
+      "config": "processsearch.mixins.json",
+      "environment": "client"
+    }
+  ],
+  "depends": {
+    "fabricloader": ">=0.15",
+    "minecraft": "~1.20.1",
+    "java": ">=17",
+    "fabric-api": "*",
+    "emi": ">=1.1.0"
+  },
+  "suggests": {
+    "create": "*",
+    "modern_industrialization": "*",
+    "modmenu": "*",
+    "cloth-config": "*"
+  }
+}

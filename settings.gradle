@@ -1,0 +1,14 @@
+pluginManagement {
+    repositories {
+        maven { url = 'https://maven.fabricmc.net/' }
+        gradlePluginPortal()
+    }
+}
+
+plugins {
+    // Provisions the Java 17 toolchain. Only JDK 18/21/22 are installed on this machine, and 1.20.1
+    // ships 17 to players, so the toolchain is downloaded rather than approximated.
+    id 'org.gradle.toolchains.foojay-resolver-convention' version '1.0.0'
+}
+
+rootProject.name = 'processsearch'

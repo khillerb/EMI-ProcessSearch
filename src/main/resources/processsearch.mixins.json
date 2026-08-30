@@ -1,0 +1,16 @@
+{
+  "required": false,
+  "minVersion": "0.8",
+  "package": "dev.processsearch.mixin",
+  "compatibilityLevel": "JAVA_17",
+  "mixins": [],
+  "client": [
+    "CompiledQueryMixin",
+    "EmiApiMixin",
+    "EmiScreenManagerMixin",
+    "RecipeScreenMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  }
+}

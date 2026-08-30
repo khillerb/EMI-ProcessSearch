@@ -1,0 +1,78 @@
+plugins {
+    id 'fabric-loom' version '1.13.6'
+    id 'java'
+}
+
+version = mod_version
+group = mod_group_id
+
+base {
+    archivesName = mod_id
+}
+
+// Mojang ships Java 17 with 1.20.1, so mods target Java 17.
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(17)
+    withSourcesJar()
+}
+
+repositories {
+    maven {
+        // EMI, only for resolving its published API if the vendored jar is ever swapped out.
+        url = 'https://maven.terraformersmc.com/releases/'
+    }
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${minecraft_version}"
+
+    // Official Mojang mappings rather than Yarn, deliberately. Create Fabric's own sources are
+    // Mojmap, and it is what lets the facet logic port over from the NeoForge version with import
+    // changes only rather than a rename of every vanilla type.
+    mappings loom.officialMojangMappings()
+
+    modImplementation "net.fabricmc:fabric-loader:${loader_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${fabric_api_version}"
+
+    // EMI, the full production jar straight out of the pack's mods folder -- see gradle.properties.
+    modCompileOnly files("libs/emi-${emi_version}.jar")
+    modLocalRuntime files("libs/emi-${emi_version}.jar")
+
+    // Create and Modern Industrialization: compileOnly, never linked unless the mod is present.
+    // Only ProcessingRecipe/HeatCondition and MachineRecipe/CableTier are referenced, and both are
+    // reached through EmiRecipe.getBackingRecipe(), so none of Create's porting-lib fluid types or
+    // MI's transfer types end up on our classpath.
+    // Mod Menu for the main-menu entry point, Cloth for the screen itself. Both are guarded at
+    // runtime, so the jar still loads in a pack that ships neither.
+    modCompileOnly files("libs/modmenu-${modmenu_version}.jar")
+    modCompileOnly files("libs/cloth-config-${cloth_version}-fabric.jar")
+
+    modCompileOnly files("libs/create-fabric-${create_version}.jar")
+    modCompileOnly files("libs/Modern-Industrialization-${mi_version}.jar")
+}
+
+processResources {
+    inputs.property 'version', project.version
+    inputs.property 'minecraft_version', project.minecraft_version
+    inputs.property 'loader_version', project.loader_version
+
+    filesMatching('fabric.mod.json') {
+        expand 'version': project.version,
+                'minecraft_version': project.minecraft_version,
+                'loader_version': project.loader_version,
+                'mod_name': project.mod_name,
+                'mod_license': project.mod_license,
+                'mod_description': project.mod_description
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 17
+}
+
+jar {
+    from('LICENSE') {
+        rename { "${it}_${base.archivesName.get()}" }
+    }
+}
