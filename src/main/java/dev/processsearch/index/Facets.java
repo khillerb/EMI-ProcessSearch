@@ -4,7 +4,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 import dev.processsearch.ProcessSearchConfig;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -37,13 +36,36 @@ public final class Facets {
 
     public static final String SHAPELESS = "shapeless";
     public static final String PACKING = "packing";
+
+    /**
+     * Both a recipe facet and an item class, which is why it is one constant rather than two.
+     *
+     * <p>No longer produced by any code here: it comes out of the rule engine like every other
+     * data-driven token. The constant survives because the legacy {@code dyeCategoryIds} and
+     * {@code dyeRecipePatterns} config keys are translated into rules that emit exactly this.
+     */
     public static final String DYE = "dye";
 
     // -- item classes, reached with the ~ prefix
     public static final String CLASS_COMPRESSED = "compressed";
     public static final String CLASS_DECORATIVE = "decorative";
     public static final String CLASS_TRIM = "trim";
-    public static final String CLASS_DYE = "dye";
+
+    /**
+     * The tokens every mod earns without anyone writing anything: they fall out of the ingredient
+     * stacks themselves rather than out of a source or a rule.
+     *
+     * <p>Named as a set so {@code /processsearch gaps} can subtract them. A category whose recipes
+     * earned only these is a category we know the name of and nothing else, which is exactly the
+     * list of mods worth writing a rule for.
+     */
+    public static final Set<String> UNIVERSAL =
+            Set.of(FLUID_IN, FLUID_OUT, CHANCE_CERTAIN, CHANCE_RANDOM);
+
+    /** True when {@code token} is one every mod gets for free, so it says nothing about coverage. */
+    public static boolean isUniversal(String token) {
+        return UNIVERSAL.contains(token);
+    }
 
     private Facets() {}
 
@@ -165,42 +187,6 @@ public final class Facets {
     private static String itemId(Item item) {
         ResourceLocation id = BuiltInRegistries.ITEM.getKey(item);
         return id == null ? "" : id.toString();
-    }
-
-    /**
-     * Snapshot of the dye config, taken once per index build so a rebuild picks up edits.
-     *
-     * <p>Prominence II ships nothing that needs this and the defaults are empty, but the rule stays
-     * because moving the jar to a pack that does -- Create: Dragons Plus generates one fan-coloring
-     * recipe per dyeable item per colour -- should be a config edit, not a code change.
-     */
-    public record DyeRules(Set<String> categoryIds, List<Pattern> patterns) {
-        public static DyeRules fromConfig() {
-            return new DyeRules(
-                    Set.copyOf(ProcessSearchConfig.dyeCategoryIds()),
-                    ProcessSearchConfig.dyePatterns());
-        }
-
-        /** Empty rules are the common case here, and let the whole check be skipped per recipe. */
-        public boolean isEmpty() {
-            return categoryIds.isEmpty() && patterns.isEmpty();
-        }
-
-        public boolean matches(String categoryId, ResourceLocation recipeId) {
-            if (categoryIds.contains(categoryId)) {
-                return true;
-            }
-            if (recipeId == null) {
-                return false;
-            }
-            String id = recipeId.toString();
-            for (Pattern p : patterns) {
-                if (p.matcher(id).find()) {
-                    return true;
-                }
-            }
-            return false;
-        }
     }
 
     /**

@@ -17,6 +17,7 @@ java {
 }
 
 repositories {
+    mavenCentral()
     maven {
         // EMI, only for resolving its published API if the vendored jar is ever swapped out.
         url = 'https://maven.terraformersmc.com/releases/'
@@ -49,6 +50,20 @@ dependencies {
 
     modCompileOnly files("libs/create-fabric-${create_version}.jar")
     modCompileOnly files("libs/Modern-Industrialization-${mi_version}.jar")
+
+    // The facet rule engine is a pure function over strings, ints and class names, so it is
+    // testable without Minecraft on the classpath. Nothing else here is.
+    testImplementation platform("org.junit:junit-bom:${junit_version}")
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+test {
+    useJUnitPlatform()
+    testLogging {
+        events 'failed'
+        exceptionFormat = 'full'
+    }
 }
 
 processResources {

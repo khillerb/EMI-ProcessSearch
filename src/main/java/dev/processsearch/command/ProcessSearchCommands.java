@@ -25,6 +25,8 @@ import net.minecraft.network.chat.Component;
  */
 public final class ProcessSearchCommands {
     private static final int MAX_LISTED = 60;
+    /** Chat is a narrow place to read a ranking in; the tail is never the interesting part. */
+    private static final int MAX_GAPS = 25;
 
     private ProcessSearchCommands() {}
 
@@ -32,6 +34,7 @@ public final class ProcessSearchCommands {
         dispatcher.register(ClientCommandManager.literal("processsearch")
                 .then(ClientCommandManager.literal("stats").executes(ProcessSearchCommands::stats))
                 .then(ClientCommandManager.literal("rebuild").executes(ProcessSearchCommands::rebuild))
+                .then(ClientCommandManager.literal("gaps").executes(ProcessSearchCommands::gaps))
                 .then(ClientCommandManager.literal("facets")
                         .executes(ctx -> facets(ctx, ""))
                         .then(ClientCommandManager.argument("contains", StringArgumentType.string())
@@ -47,6 +50,11 @@ public final class ProcessSearchCommands {
         send(source, prefixLine(ProcessSearchConfig.usedInPrefix(), "process[/property]", "used in"));
         send(source, prefixLine(ProcessSearchConfig.machineForPrefix(), "process", "machine for"));
         send(source, prefixLine(ProcessSearchConfig.itemClassPrefix(), "class", "item class"));
+
+        if (ProcessSearchConfig.facetRulesEnabled()) {
+            send(source, Component.literal("  " + ProcessSearchConfig.facetRules().size()
+                    + " facet rules loaded").withStyle(ChatFormatting.GRAY));
+        }
 
         if (ProcessSearchConfig.processTree()) {
             send(source, Component.literal("  ")
@@ -96,6 +104,12 @@ public final class ProcessSearchCommands {
                         + ProcessIndex.consumedEntryCount() + " used-in, "
                         + ProcessIndex.machineEntryCount() + " machine entries"));
                 send(source, Component.literal("  " + ProcessIndex.facetCount() + " distinct facets"));
+                int gapCount = ProcessIndex.gaps().size();
+                if (gapCount > 0) {
+                    send(source, Component.literal("  " + gapCount
+                            + " categories with no facets of their own -- /processsearch gaps")
+                            .withStyle(ChatFormatting.DARK_GRAY));
+                }
             }
         }
 
@@ -123,6 +137,48 @@ public final class ProcessSearchCommands {
         send(ctx.getSource(), Component.literal("Process Search: config reloaded, rebuilding index")
                 .withStyle(ChatFormatting.GREEN));
         return 1;
+    }
+
+    /**
+     * Which categories earned nothing but their own name.
+     *
+     * <p>The counterpart to {@code facets}: that one says what the pack <em>can</em> be asked, this
+     * one says what it cannot. A rule is only worth writing where there is something to fix, and in
+     * a pack of this size the answer is not guessable -- so it is measured instead.
+     */
+    private static int gaps(CommandContext<FabricClientCommandSource> ctx) {
+        FabricClientCommandSource source = ctx.getSource();
+        if (!ProcessIndex.isReady()) {
+            send(source, Component.literal("Process Search: index not ready yet")
+                    .withStyle(ChatFormatting.YELLOW));
+            return 0;
+        }
+        List<ProcessIndex.Snapshot.CategoryGap> gaps = ProcessIndex.gaps();
+        if (gaps.isEmpty()) {
+            send(source, Component.literal("Every category earned at least one facet. Nothing to fix.")
+                    .withStyle(ChatFormatting.GREEN));
+            return 1;
+        }
+
+        send(source, Component.literal("Categories with no facets beyond their own name")
+                .withStyle(ChatFormatting.GOLD));
+        send(source, Component.literal("Biggest first. Add rules in config/processsearch/facet_rules/.")
+                .withStyle(ChatFormatting.DARK_GRAY));
+
+        int shown = Math.min(gaps.size(), MAX_GAPS);
+        for (int i = 0; i < shown; i++) {
+            ProcessIndex.Snapshot.CategoryGap gap = gaps.get(i);
+            send(source, Component.literal("  ")
+                    .append(Component.literal(String.valueOf(gap.recipes()))
+                            .withStyle(ChatFormatting.AQUA))
+                    .append(Component.literal("  " + gap.name() + "  "))
+                    .append(Component.literal(gap.id()).withStyle(ChatFormatting.DARK_GRAY)));
+        }
+        if (gaps.size() > shown) {
+            send(source, Component.literal("... and " + (gaps.size() - shown) + " more")
+                    .withStyle(ChatFormatting.DARK_GRAY));
+        }
+        return shown;
     }
 
     private static int facets(CommandContext<FabricClientCommandSource> ctx, String contains) {

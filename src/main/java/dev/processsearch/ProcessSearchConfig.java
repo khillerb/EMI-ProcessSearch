@@ -9,13 +9,17 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.regex.Pattern;
-import java.util.regex.PatternSyntaxException;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
 
+import dev.processsearch.index.Facets;
 import dev.processsearch.index.Role;
+import dev.processsearch.index.rules.FacetRule;
+import dev.processsearch.index.rules.FacetRuleLoader;
+import dev.processsearch.index.rules.FacetRules;
 import dev.processsearch.input.HotKey;
 import net.fabricmc.loader.api.FabricLoader;
 import org.lwjgl.glfw.GLFW;
@@ -46,7 +50,7 @@ public final class ProcessSearchConfig {
      * for anyone who already has the file -- the tree caps would have stayed at their old values on
      * every existing install. Version 2 raises them.
      */
-    private static final int CONFIG_VERSION = 6;
+    private static final int CONFIG_VERSION = 7;
 
     private static final char DEFAULT_MADE_BY = '>';
     private static final char DEFAULT_USED_IN = '<';
@@ -93,7 +97,15 @@ public final class ProcessSearchConfig {
             "how much is drawn per layer before the rest collapses into a +N chip, and are what to",
             "raise if the screen feels sparse; treeMax* are ceilings on how much the walk keeps.",
             "treeHideIdentityRecipes drops steps that hand back an item they also consumed --",
-            "anvil repair, grindstone, enchanting -- which otherwise loop tools back on themselves.");
+            "anvil repair, grindstone, enchanting -- which otherwise loop tools back on themselves.",
+            "Facet rules: drop .json files in config/processsearch/facet_rules/ to add facets for any",
+            "mod, with no code change and nothing to compile against. A rule matches on the category",
+            "id or namespace, a regex over the recipe id, the backing recipe's class name (which",
+            "covers every subclass, so one rule reaches a whole mod family), whether fluids are",
+            "involved, and how many ingredient slots there are -- then emits tokens, and optionally",
+            "~ classes for the recipe's outputs. See the README for the full field list.",
+            "Run /processsearch gaps to see which categories earned no facets beyond their own name;",
+            "that is the list of mods a rule would actually be worth writing for.");
 
     /** Defaults are the mods Prominence II: Hasturian Era actually ships. */
     private static final List<String> DEFAULT_DECORATIVE = List.of(
@@ -121,6 +133,7 @@ public final class ProcessSearchConfig {
 
         boolean enableCreateFacets = true;
         boolean enableModernIndustrializationFacets = true;
+        boolean enableFacetRules = true;
         boolean enableCatalystFacets = true;
         boolean enableRecipePageFilter = true;
         boolean reuseIndexAcrossWorlds = true;
@@ -162,6 +175,15 @@ public final class ProcessSearchConfig {
     private static volatile Data data = resolved(new Data());
 
     /**
+     * The facet rules for this session, reloaded whenever the config is.
+     *
+     * <p>Kept here rather than in {@code ProcessIndex} so that one thing owns "everything a player
+     * can edit", and so a rule edit rides the existing {@link #generation} bump into the index
+     * fingerprint -- which is what makes an edited rule file invalidate the cached index for free.
+     */
+    private static volatile FacetRules facetRules = FacetRules.EMPTY;
+
+    /**
      * Bumped on every load. The index fingerprint includes it, so a config edit followed by
      * {@code /processsearch rebuild} can never be answered from the cached index -- the item-class
      * rules and the excluded-category list both live inside a built snapshot.
@@ -188,8 +210,84 @@ public final class ProcessSearchConfig {
         }
         loaded._comment = HELP;
         data = resolved(loaded);
+        facetRules = loadRules(data);
         generation++;
         save(path, data);
+    }
+
+    /**
+     * Bundled defaults, then {@code config/processsearch/facet_rules/}, then whatever the legacy
+     * dye keys translate to.
+     *
+     * <p>The directory is created empty if it is missing, because a config option nobody can find
+     * is not a config option.
+     */
+    private static FacetRules loadRules(Data value) {
+        if (!value.enableFacetRules) {
+            return FacetRules.EMPTY;
+        }
+        Path dir = rulesDir();
+        try {
+            Files.createDirectories(dir);
+        } catch (Exception e) {
+            ProcessSearch.LOGGER.warn("Could not create {}: {}", dir, e.toString());
+        }
+        return FacetRuleLoader.load(dir, legacyDyeRules(value));
+    }
+
+    /**
+     * The old {@code dyeCategoryIds} / {@code dyeRecipePatterns} keys, as rules.
+     *
+     * <p>{@code ~dye} used to be hardcoded in the index build. It is a rule like any other now, so
+     * rather than keep a second engine alive for two config keys, the keys are translated. Existing
+     * configs keep working and there is one code path instead of two.
+     *
+     * <p>The original semantics were an OR -- match a listed category <em>or</em> any pattern --
+     * and a rule ANDs its conditions, so this is one rule for the categories plus one per pattern.
+     * Built as JSON and handed to the parser so the validation and the regex handling are shared
+     * rather than reimplemented.
+     */
+    private static List<FacetRule> legacyDyeRules(Data value) {
+        if (value.dyeCategoryIds.isEmpty() && value.dyeRecipePatterns.isEmpty()) {
+            return List.of();
+        }
+        JsonArray rules = new JsonArray();
+        if (!value.dyeCategoryIds.isEmpty()) {
+            JsonObject rule = dyeRule("legacy_dye_categories");
+            JsonArray ids = new JsonArray();
+            value.dyeCategoryIds.forEach(ids::add);
+            rule.add("categoryId", ids);
+            rules.add(rule);
+        }
+        int n = 0;
+        for (String pattern : value.dyeRecipePatterns) {
+            JsonObject rule = dyeRule("legacy_dye_pattern_" + n++);
+            rule.addProperty("recipeIdPattern", pattern);
+            rules.add(rule);
+        }
+        JsonObject root = new JsonObject();
+        root.add("rules", rules);
+        return FacetRuleLoader.parse(GSON.toJson(root), "legacy dye config");
+    }
+
+    private static JsonObject dyeRule(String id) {
+        JsonObject rule = new JsonObject();
+        rule.addProperty("id", id);
+        JsonArray dye = new JsonArray();
+        dye.add(Facets.DYE);
+        rule.add("tokens", dye);
+        // The same token in both channels: it describes the recipe and classifies what came out.
+        rule.add("itemClasses", dye.deepCopy());
+        return rule;
+    }
+
+    public static Path rulesDir() {
+        return FabricLoader.getInstance().getConfigDir().resolve("processsearch").resolve("facet_rules");
+    }
+
+    /** The rules the index build should apply. Empty when the feature is switched off. */
+    public static FacetRules facetRules() {
+        return facetRules;
     }
 
     private static Path path() {
@@ -337,6 +435,7 @@ public final class ProcessSearchConfig {
 
         public boolean enableCreateFacets;
         public boolean enableModernIndustrializationFacets;
+        public boolean enableFacetRules;
         public boolean enableCatalystFacets;
         public boolean enableRecipePageFilter;
         public boolean reuseIndexAcrossWorlds;
@@ -371,6 +470,7 @@ public final class ProcessSearchConfig {
         d.itemClassPrefix = current.itemClassPrefix;
         d.enableCreateFacets = current.enableCreateFacets;
         d.enableModernIndustrializationFacets = current.enableModernIndustrializationFacets;
+        d.enableFacetRules = current.enableFacetRules;
         d.enableCatalystFacets = current.enableCatalystFacets;
         d.enableRecipePageFilter = current.enableRecipePageFilter;
         d.reuseIndexAcrossWorlds = current.reuseIndexAcrossWorlds;
@@ -409,6 +509,7 @@ public final class ProcessSearchConfig {
         next.itemClassPrefix = d.itemClassPrefix;
         next.enableCreateFacets = d.enableCreateFacets;
         next.enableModernIndustrializationFacets = d.enableModernIndustrializationFacets;
+        next.enableFacetRules = d.enableFacetRules;
         next.enableCatalystFacets = d.enableCatalystFacets;
         next.enableRecipePageFilter = d.enableRecipePageFilter;
         next.reuseIndexAcrossWorlds = d.reuseIndexAcrossWorlds;
@@ -431,6 +532,7 @@ public final class ProcessSearchConfig {
         next.excludedCategories = new ArrayList<>(d.excludedCategories);
 
         data = resolved(next);
+        facetRules = loadRules(data);
         generation++;
         save(path(), data);
     }
@@ -486,6 +588,11 @@ public final class ProcessSearchConfig {
 
     public static boolean miFacets() {
         return data.enableModernIndustrializationFacets;
+    }
+
+    /** Whether the data-driven rules in {@code config/processsearch/facet_rules/} are applied. */
+    public static boolean facetRulesEnabled() {
+        return data.enableFacetRules;
     }
 
     public static boolean catalystFacets() {
@@ -616,25 +723,7 @@ public final class ProcessSearchConfig {
         return data.compressedModIds;
     }
 
-    public static List<String> dyeCategoryIds() {
-        return data.dyeCategoryIds;
-    }
-
     public static List<String> excludedCategories() {
         return data.excludedCategories;
-    }
-
-    /** Compiles the dye patterns, dropping any entry that was typo'd rather than throwing. */
-    public static List<Pattern> dyePatterns() {
-        List<Pattern> compiled = new ArrayList<>();
-        for (String regex : data.dyeRecipePatterns) {
-            try {
-                compiled.add(Pattern.compile(regex));
-            } catch (PatternSyntaxException e) {
-                ProcessSearch.LOGGER.warn("Ignoring invalid dyeRecipePatterns entry '{}': {}",
-                        regex, e.getMessage());
-            }
-        }
-        return List.copyOf(compiled);
     }
 }

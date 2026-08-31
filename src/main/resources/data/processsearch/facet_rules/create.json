@@ -1,0 +1,20 @@
+{
+  "_comment": [
+    "Create and everything built on it. CreateFacets already reads heat and duration off the",
+    "recipe when Create is compiled in; these are the facets that need no field access, so they",
+    "work for Create addons whose own recipe types were never on our classpath.",
+    "Matching is on the class name, so every subclass of ProcessingRecipe is covered by one rule."
+  ],
+  "rules": [
+    {
+      "id": "create_processing",
+      "recipeClass": "com.simibubi.create.content.processing.recipe.ProcessingRecipe",
+      "tokens": ["create_processing"]
+    },
+    {
+      "id": "create_sequenced_assembly",
+      "recipeClass": "com.simibubi.create.content.processing.sequenced.SequencedAssemblyRecipe",
+      "tokens": ["sequenced_assembly", "multi_step"]
+    }
+  ]
+}
