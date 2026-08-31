@@ -5,6 +5,8 @@ build/
 
 # Dev client
 run/
+# Written by anything that pulls in Minecraft's Log4j config, the test JVM included.
+logs/
 
 # Vendored compile-time jars.
 #

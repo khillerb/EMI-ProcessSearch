@@ -1,6 +1,7 @@
 package dev.processsearch.index;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -20,6 +21,7 @@ import dev.processsearch.ProcessSearch;
 import dev.processsearch.ProcessSearchConfig;
 import dev.processsearch.index.sources.CreateFacets;
 import dev.processsearch.index.sources.MachineRecipeFacets;
+import dev.processsearch.index.sources.RuleFacets;
 import dev.processsearch.index.sources.VanillaRecipeFacets;
 import dev.processsearch.search.SearchHook;
 import net.fabricmc.loader.api.FabricLoader;
@@ -55,8 +57,18 @@ public final class ProcessIndex {
                            Map<Object, Set<String>> machineFor,
                            Map<Object, Set<String>> itemClass,
                            Map<String, Set<String>> categoryTokens,
+                           List<CategoryGap> gaps,
                            Facets.ItemClassRules classRules,
                            Stats stats) {
+
+        /**
+         * A category whose recipes earned nothing beyond the category's own name.
+         *
+         * <p>Which is to say: a mod we can find by name and cannot ask anything about. Ranked by
+         * recipe count, this is the shortlist of mods a facet rule would actually be worth writing
+         * for, and it is not guessable in a pack this size -- hence {@code /processsearch gaps}.
+         */
+        public record CategoryGap(String id, String name, int recipes) {}
 
         /**
          * What it cost to build this index and what came out of it.
@@ -106,6 +118,11 @@ public final class ProcessIndex {
     private static final Map<Object, Set<String>> MACHINE_FOR = new HashMap<>();
     private static final Map<Object, Set<String>> ITEM_CLASS = new HashMap<>();
     private static final Map<String, Set<String>> CATEGORY_TOKENS = new HashMap<>();
+    // For the gap report: how big each category is, what it is called, and whether anything in it
+    // earned a token that was not free for every mod.
+    private static final Map<String, Integer> CATEGORY_RECIPES = new HashMap<>();
+    private static final Map<String, String> CATEGORY_NAMES = new HashMap<>();
+    private static final Set<String> CATEGORY_WITH_FACETS = new HashSet<>();
 
     private static volatile Snapshot snapshot;
     private static State state = State.IDLE;
@@ -140,7 +157,6 @@ public final class ProcessIndex {
     private static Set<String> currentProcessTokens = Set.of();
 
     private static List<FacetSource> sources = List.of();
-    private static Facets.DyeRules dyeRules = new Facets.DyeRules(Set.of(), List.of());
     private static Facets.ItemClassRules itemClassRules =
             new Facets.ItemClassRules(Set.of(), Set.of(), Set.of());
 
@@ -216,6 +232,9 @@ public final class ProcessIndex {
         MACHINE_FOR.clear();
         ITEM_CLASS.clear();
         CATEGORY_TOKENS.clear();
+        CATEGORY_RECIPES.clear();
+        CATEGORY_NAMES.clear();
+        CATEGORY_WITH_FACETS.clear();
         WARNED.clear();
         snapshot = null;
         manager = null;
@@ -323,9 +342,13 @@ public final class ProcessIndex {
                 && FabricLoader.getInstance().isModLoaded("modern_industrialization")) {
             chain.add(new MachineRecipeFacets());
         }
+        // No mod check: rules select themselves by matching, so one for a mod that is not installed
+        // simply never fires. This is the whole point of them -- coverage without a build change.
+        if (ProcessSearchConfig.facetRulesEnabled()) {
+            chain.add(new RuleFacets(ProcessSearchConfig.facetRules()));
+        }
         sources = List.copyOf(chain);
 
-        dyeRules = Facets.DyeRules.fromConfig();
         itemClassRules = Facets.ItemClassRules.fromConfig();
 
         if (reuseCached(fingerprint)) {
@@ -461,6 +484,18 @@ public final class ProcessIndex {
             warnOnce(currentCategoryId, e);
             currentRecipes = null;
         }
+        CATEGORY_RECIPES.put(currentCategoryId,
+                currentRecipes == null ? 0 : currentRecipes.size());
+        CATEGORY_NAMES.put(currentCategoryId, categoryName(category));
+    }
+
+    /** The displayed title, falling back to the id when a category needs a context we lack. */
+    private static String categoryName(EmiRecipeCategory category) {
+        try {
+            return category.getName().getString();
+        } catch (RuntimeException | LinkageError e) {
+            return category.getId().toString();
+        }
     }
 
     private static List<EmiIngredient> workstationsOf(EmiRecipeCategory category) {
@@ -523,24 +558,38 @@ public final class ProcessIndex {
             return;
         }
 
-        boolean dye = !dyeRules.isEmpty() && dyeRules.matches(currentCategoryId, idOf(recipe));
-        if (dye) {
-            SCAN.tokens.add(Facets.DYE);
+        // A category earns its keep the moment one of its recipes says something the category name
+        // did not. fluid.* and chance.* do not count -- every mod gets those for nothing.
+        if (!CATEGORY_WITH_FACETS.contains(currentCategoryId) && earnedFacet(SCAN.tokens)) {
+            CATEGORY_WITH_FACETS.add(currentCategoryId);
         }
 
         // Reused rather than allocated per recipe: this runs once for every recipe in the pack.
         COMBINED.clear();
         Facets.combineInto(COMBINED, currentProcessTokens, SCAN.tokens);
 
+        boolean classified = !SCAN.itemClasses.isEmpty();
         for (Object key : SCAN.outputs) {
             MADE_BY.computeIfAbsent(key, k -> new HashSet<>()).addAll(COMBINED);
-            if (dye) {
-                ITEM_CLASS.computeIfAbsent(key, k -> new HashSet<>()).add(Facets.CLASS_DYE);
+            if (classified) {
+                // Item classes hang on what came out, not on the recipe: ~dye means "this is a dye
+                // product", which is a fact about the item.
+                ITEM_CLASS.computeIfAbsent(key, k -> new HashSet<>()).addAll(SCAN.itemClasses);
             }
         }
         for (Object key : SCAN.inputs) {
             USED_IN.computeIfAbsent(key, k -> new HashSet<>()).addAll(COMBINED);
         }
+    }
+
+    /** True when any token says more than "this recipe exists and has stacks in it". */
+    private static boolean earnedFacet(Set<String> tokens) {
+        for (String token : tokens) {
+            if (!Facets.isUniversal(token)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -597,14 +646,6 @@ public final class ProcessIndex {
         }
     }
 
-    private static ResourceLocation idOf(EmiRecipe recipe) {
-        try {
-            return recipe.getId();
-        } catch (RuntimeException | LinkageError e) {
-            return null;
-        }
-    }
-
     // ------------------------------------------------------------ recipe-page filtering
 
     /** Whatever is currently typed in EMI's search box, or empty if EMI is not up yet. */
@@ -637,9 +678,6 @@ public final class ProcessIndex {
         if (!collectInto(category, recipe, scan, categoryId)) {
             return processes;
         }
-        if (!dyeRules.isEmpty() && dyeRules.matches(categoryId, idOf(recipe))) {
-            scan.tokens.add(Facets.DYE);
-        }
         return Facets.combine(processes, scan.tokens);
     }
 
@@ -665,6 +703,7 @@ public final class ProcessIndex {
                 Map.copyOf(MACHINE_FOR),
                 Map.copyOf(ITEM_CLASS),
                 Map.copyOf(CATEGORY_TOKENS),
+                gapReport(),
                 itemClassRules,
                 stats);
 
@@ -674,6 +713,9 @@ public final class ProcessIndex {
         MACHINE_FOR.clear();
         ITEM_CLASS.clear();
         CATEGORY_TOKENS.clear();
+        CATEGORY_RECIPES.clear();
+        CATEGORY_NAMES.clear();
+        CATEGORY_WITH_FACETS.clear();
         COMBINED.clear();
         categories = List.of();
         currentCategory = null;
@@ -699,6 +741,28 @@ public final class ProcessIndex {
             coldQuery = false;
             refreshSearch();
         }
+    }
+
+    /**
+     * Categories that contributed nothing but their own name, biggest first.
+     *
+     * <p>Computed once at publish and carried on the snapshot, so a reused index still answers
+     * {@code /processsearch gaps} -- the build counters it would otherwise need are long gone by
+     * then. Empty categories are left out: nothing to write a rule against.
+     */
+    private static List<Snapshot.CategoryGap> gapReport() {
+        List<Snapshot.CategoryGap> gaps = new ArrayList<>();
+        for (Map.Entry<String, Integer> entry : CATEGORY_RECIPES.entrySet()) {
+            int recipes = entry.getValue();
+            if (recipes <= 0 || CATEGORY_WITH_FACETS.contains(entry.getKey())) {
+                continue;
+            }
+            gaps.add(new Snapshot.CategoryGap(entry.getKey(),
+                    CATEGORY_NAMES.getOrDefault(entry.getKey(), entry.getKey()), recipes));
+        }
+        gaps.sort(Comparator.comparingInt(Snapshot.CategoryGap::recipes).reversed()
+                .thenComparing(Snapshot.CategoryGap::id));
+        return List.copyOf(gaps);
     }
 
     private static void canonicalize(Map<Object, Set<String>> map) {
@@ -787,6 +851,12 @@ public final class ProcessIndex {
     public static int facetCount() {
         Snapshot current = snapshot;
         return current == null ? 0 : current.distinctFacets().size();
+    }
+
+    /** Categories that earned nothing beyond their own name, biggest first. */
+    public static List<Snapshot.CategoryGap> gaps() {
+        Snapshot current = snapshot;
+        return current == null ? List.of() : current.gaps();
     }
 
     public static List<String> facetsMatching(String contains, int limit) {

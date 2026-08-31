@@ -1,0 +1,20 @@
+{
+  "_comment": [
+    "Modern Industrialization. MachineRecipeFacets reads the EU tier and duration off the recipe",
+    "when MI is compiled in; this adds the facets that need only the type name, so MI addons",
+    "shipping their own recipe subclasses are covered as well."
+  ],
+  "rules": [
+    {
+      "id": "mi_machine",
+      "recipeClass": "aztech.modern_industrialization.machines.recipe.MachineRecipe",
+      "tokens": ["mi_machine"]
+    },
+    {
+      "id": "mi_fluid_machine",
+      "recipeClass": "aztech.modern_industrialization.machines.recipe.MachineRecipe",
+      "requiresFluidInput": true,
+      "tokens": ["mi_machine.fluid"]
+    }
+  ]
+}
