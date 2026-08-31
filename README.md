@@ -1,6 +1,6 @@
 # Process Search — EMI
 
-A client-side EMI addon for **Minecraft 1.20.1 / Fabric**, built for Prominence II: Hasturian Era.
+A client-side EMI addon for **Minecraft 1.20.1 / Fabric**, ported from JEI-ProcessSearch for personal use after I started playing for Prominence II: Hasturian Era.
 
 EMI's item list is very good at *"what is this item?"* and has no answer at all for *"what can this
 machine make?"*. In a 445-mod pack that second question is the one that matters when you are laying
