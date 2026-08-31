@@ -25,18 +25,48 @@ import net.minecraft.world.level.material.Fluid;
  */
 public final class Scan {
     public final Set<String> tokens = new HashSet<>();
+    /**
+     * {@code ~} classes this recipe hangs on its outputs.
+     *
+     * <p>Separate from {@link #tokens} because it is a different question: those describe the
+     * recipe, these describe the thing that came out of it, and they land in different maps. Only
+     * the rule engine fills this -- {@code ~dye} used to be a special case in the index build, and
+     * is now just a rule like any other.
+     */
+    public final Set<String> itemClasses = new HashSet<>();
     public final List<Object> outputs = new ArrayList<>();
     public final List<Object> inputs = new ArrayList<>();
 
     private boolean sawOutput;
     private boolean randomOutput;
+    private int inputSlots;
+    private int outputSlots;
 
     public void reset() {
         tokens.clear();
+        itemClasses.clear();
         outputs.clear();
         inputs.clear();
         sawOutput = false;
         randomOutput = false;
+        inputSlots = 0;
+        outputSlots = 0;
+    }
+
+    /**
+     * Ingredient <em>slots</em>, not stacks: a tag counts once rather than once per item it accepts.
+     *
+     * <p>That is the number a rule author means by "two inputs", and it is the only one that is
+     * stable -- {@link #inputs} is the flattened form, so one tag ingredient can put hundreds of
+     * entries in it.
+     */
+    public int inputSlots() {
+        return inputSlots;
+    }
+
+    /** Output stacks that were non-empty. */
+    public int outputSlots() {
+        return outputSlots;
     }
 
     public boolean hasRoles() {
@@ -48,6 +78,7 @@ public final class Scan {
         if (k == null) {
             return;
         }
+        outputSlots++;
         outputs.add(k);
         sawOutput = true;
         if (k instanceof Fluid) {
@@ -65,6 +96,7 @@ public final class Scan {
         if (ingredient == null) {
             return;
         }
+        inputSlots++;
         // A tag ingredient flattens to every stack it accepts; each is a real way to feed the
         // recipe, so each earns the used-in entry.
         for (EmiStack stack : ingredient.getEmiStacks()) {

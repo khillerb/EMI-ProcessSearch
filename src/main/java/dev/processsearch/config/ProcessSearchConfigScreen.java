@@ -80,6 +80,14 @@ public final class ProcessSearchConfigScreen {
                 .setTooltip(Component.literal("eu.* voltage tiers and speed.*."))
                 .setSaveConsumer(v -> draft.enableModernIndustrializationFacets = v)
                 .build());
+        category.addEntry(entry.startBooleanToggle(Component.literal("Facet rules"),
+                        draft.enableFacetRules)
+                .setDefaultValue(true)
+                .setTooltip(Component.literal("Data-driven facets from config/processsearch/facet_rules/."),
+                        Component.literal("Covers mods with no built-in support; edit the JSON to add"),
+                        Component.literal("more. /processsearch gaps shows which mods want one."))
+                .setSaveConsumer(v -> draft.enableFacetRules = v)
+                .build());
         category.addEntry(entry.startBooleanToggle(Component.literal("Machine name facets"),
                         draft.enableCatalystFacets)
                 .setDefaultValue(true)

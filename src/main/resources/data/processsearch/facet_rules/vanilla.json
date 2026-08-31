@@ -1,0 +1,31 @@
+{
+  "_comment": [
+    "Facets that hold for any pack, because they are keyed to vanilla recipe types rather than",
+    "to a mod. Every modded recipe extending one of these types is covered too, which is the",
+    "point of matching on the class rather than on the category.",
+    "Copy this file into config/processsearch/facet_rules/ and edit it to override these."
+  ],
+  "rules": [
+    {
+      "id": "vanilla_smelting",
+      "recipeClass": "net.minecraft.world.item.crafting.AbstractCookingRecipe",
+      "tokens": ["cooking"]
+    },
+    {
+      "id": "vanilla_smithing",
+      "recipeClass": "net.minecraft.world.item.crafting.SmithingRecipe",
+      "tokens": ["smithing"]
+    },
+    {
+      "id": "vanilla_single_item",
+      "recipeClass": "net.minecraft.world.item.crafting.SingleItemRecipe",
+      "tokens": ["single_input"]
+    },
+    {
+      "id": "fluid_conversion",
+      "requiresFluidInput": true,
+      "requiresFluidOutput": true,
+      "tokens": ["fluid.both"]
+    }
+  ]
+}

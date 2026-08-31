@@ -110,7 +110,7 @@ the mod.
 | `~decorative` | Chipped, Chipped Express, Handcrafted, Decorative Blocks, Supplementaries, Twigs, Convenient Decor, Fast Paintings, DarkPaintings, Better Beds, Immersive Lanterns, Connectible Chains |
 | `~trim` | AllTheTrims, DynamicTrim, More Armor Trims, BetterTrims — one smithing recipe per material per pattern, this pack's answer to compressed-block noise |
 | `~compressed` | nothing by default; the rule is kept for packs that need it |
-| `~dye` | nothing by default; configurable by category id or recipe-id regex |
+| `~dye` | nothing by default; now an ordinary [facet rule](#writing-facet-rules), and the old `dyeCategoryIds` / `dyeRecipePatterns` keys still work |
 
 Mostly used negated, to clear the grid:
 
@@ -118,8 +118,96 @@ Mostly used negated, to clear the grid:
 >crafting -~decorative -~trim
 ```
 
-Item classes are computed from the item's namespace, not from recipes, so they catch the thousands
-of furniture blocks that have no interesting recipe at all.
+`~decorative`, `~trim` and `~compressed` are computed from the item's namespace, not from recipes,
+so they catch the thousands of furniture blocks that have no interesting recipe at all. `~dye` is
+the other kind: it comes from a recipe, and hangs on whatever that recipe produced.
+
+**From a rule file, any mod**
+
+Anything else, without a line of code — see below.
+
+## Writing facet rules
+
+The two hand-written sources above exist because Create's heat condition and MI's EU cost are
+*fields*, and reading a field means compiling against the mod. That is a fine trade for two mods
+and a bad one for four hundred: each new one would cost a vendored jar, a build change, a
+mod-loaded gate and a config toggle — and a *pack* could never add a facet at all, only a mod
+release could.
+
+So everything else is data. Drop a `.json` file in `config/processsearch/facet_rules/` and it is
+picked up on the next `/processsearch rebuild`. No compile dependency, no jar, no restart.
+
+```json
+{
+  "rules": [
+    {
+      "id": "techreborn_powered",
+      "categoryNamespace": "techreborn",
+      "tokens": ["powered"]
+    },
+    {
+      "id": "big_smelt",
+      "recipeClass": "net.minecraft.world.item.crafting.AbstractCookingRecipe",
+      "inputCount": { "min": 2 },
+      "tokens": ["bulk_cooking"]
+    },
+    {
+      "id": "fan_dye",
+      "categoryId": ["create_dragons_plus:fan_coloring"],
+      "recipeIdPattern": "_dye$",
+      "tokens": ["dye"],
+      "itemClasses": ["dye"]
+    }
+  ]
+}
+```
+
+Every condition is optional and they are **ANDed**; within one condition a list is an OR. A rule
+with no condition at all is refused, because it would tag every recipe in the pack.
+
+| Field | Shape | Matches |
+|---|---|---|
+| `categoryId` | string or list | the full `namespace:path`, exactly |
+| `categoryNamespace` | string or list | every category of that mod |
+| `recipeIdPattern` | regex | searched against the recipe id, not anchored |
+| `recipeClass` | fully-qualified name | the backing recipe's type |
+| `matchSubclasses` | bool, default `true` | walks superclasses *and* interfaces |
+| `requiresFluidInput` / `requiresFluidOutput` | bool | `true` demands a fluid, `false` forbids one |
+| `inputCount` / `outputCount` | `2` or `{"min":1,"max":3}` | ingredient **slots**, so a tag counts once |
+
+and emits:
+
+| Field | Effect |
+|---|---|
+| `tokens` | facet tokens, reachable through `>`, `<` and `*` |
+| `itemClasses` | `~` classes hung on the recipe's **outputs** |
+
+Tokens go through the same sanitiser as every other facet, so `"Heated Mixing"` becomes
+`heated_mixing` and stays typeable — EMI splits its search box on whitespace and `|`.
+
+### Why matching on the class is the useful part
+
+`recipeClass` walks the whole type hierarchy by **name**. One rule naming Create's
+`ProcessingRecipe` therefore reaches mixing, crushing, milling, pressing, every fan process, and
+every Create addon built on the same base — the same reach `instanceof` gives `CreateFacets`,
+without the class ever being on our classpath.
+
+Nothing here reads a field or calls a method on a recipe. That is the deliberate limit: a rule
+cannot ask what a recipe's EU cost *is*, only what kind of thing it is. In exchange, a rule written
+for a mod you do not have installed cannot throw — the worst it can do is fail to match.
+
+### Precedence
+
+Bundled defaults load first, then `config/processsearch/facet_rules/` in filename order. A rule
+reusing an earlier rule's `id` replaces it outright, which is how you override a bundled default
+rather than fighting it. Copy the file out of the jar, edit it, keep the ids.
+
+Nothing throws. A malformed file, or one bad rule inside a good file, is named in the log and
+skipped; the rest of the file still loads. `/processsearch stats` reports how many rules ended up
+active, so a file that failed to parse is visible rather than silent.
+
+The `dyeCategoryIds` and `dyeRecipePatterns` config keys still work — they are translated into
+rules at load, so `~dye` is now an ordinary rule rather than a special case in the index build.
 
 ## Filtering recipe pages
 
@@ -357,8 +445,14 @@ budget is doing its job.
 ```
 /processsearch stats            prefixes, hook state, index state, counts, build time
 /processsearch facets <text>    discover the searchable tokens
+/processsearch gaps             categories that earned no facets beyond their own name
 /processsearch rebuild          reload the config, then drop and rebuild the index
 ```
+
+`gaps` is the counterpart to `facets`: that one says what the pack *can* be asked, this one says
+what it cannot. It lists, biggest first, every category whose recipes contributed nothing but the
+category's own name — which is precisely the shortlist of mods a [facet rule](#writing-facet-rules)
+would be worth writing for. In a pack this size that list is not guessable, so it is measured.
 
 `stats` reports whether the search hook actually installed. That matters: the mixin config fails
 soft so an EMI update cannot brick a live pack, which means a missed hook would otherwise be
