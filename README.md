@@ -40,7 +40,7 @@ and they compose with EMI's native `@mod`, `#tooltip` and `$tag`.
 The query this was built for is *ingots craftable by a heated mixer*:
 
 ```
->mixing/heat.heated
+ingot >mixing/heat.heated
 ```
 
 Create's heat requirement is a **field on the recipe, not a category** — there is one
