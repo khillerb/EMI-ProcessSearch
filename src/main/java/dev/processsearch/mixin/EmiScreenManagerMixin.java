@@ -6,6 +6,7 @@ import dev.emi.emi.screen.EmiScreenManager;
 import dev.processsearch.ProcessSearchConfig;
 import dev.processsearch.index.tree.Direction;
 import dev.processsearch.index.tree.ProcessTreeNavigation;
+import dev.processsearch.index.tree.RouteAnchor;
 import dev.processsearch.input.KeyHook;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -37,13 +38,16 @@ public class EmiScreenManagerMixin {
             return;
         }
 
-        Direction direction;
-        if (ProcessSearchConfig.treeConsumersKey().matches(keyCode, modifiers)) {
-            direction = Direction.CONSUMERS;
-        } else if (ProcessSearchConfig.treeProducersKey().matches(keyCode, modifiers)) {
-            direction = Direction.PRODUCERS;
-        } else {
-            return;
+        boolean routing = ProcessSearchConfig.treeRouteKey().matches(keyCode, modifiers);
+        Direction direction = null;
+        if (!routing) {
+            if (ProcessSearchConfig.treeConsumersKey().matches(keyCode, modifiers)) {
+                direction = Direction.CONSUMERS;
+            } else if (ProcessSearchConfig.treeProducersKey().matches(keyCode, modifiers)) {
+                direction = Direction.PRODUCERS;
+            } else {
+                return;
+            }
         }
 
         EmiStackInteraction hovered;
@@ -55,7 +59,11 @@ public class EmiScreenManagerMixin {
         if (hovered == null || hovered.isEmpty()) {
             return;
         }
-        if (ProcessTreeNavigation.open(hovered.getStack(), direction)) {
+
+        boolean handled = routing
+                ? RouteAnchor.press(hovered.getStack())
+                : ProcessTreeNavigation.open(hovered.getStack(), direction);
+        if (handled) {
             cir.setReturnValue(true);
         }
     }

@@ -3,7 +3,9 @@ package dev.processsearch.screen;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.IdentityHashMap;
+import java.util.Map;
 import java.util.List;
 import java.util.Set;
 
@@ -17,6 +19,8 @@ import dev.processsearch.index.tree.ItemNode;
 import dev.processsearch.index.tree.ProcessGraph;
 import dev.processsearch.index.tree.ProcessNode;
 import dev.processsearch.index.tree.ProcessTreeNavigation;
+import dev.processsearch.index.tree.RouteBuilder;
+import dev.processsearch.index.tree.RouteSearch;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
@@ -82,6 +86,9 @@ public class ProcessGraphScreen extends Screen {
     /** Against a wall of icons rather than a wall of labelled boxes, the darker grey disappears. */
     private static final int EDGE_COMPACT = 0xFF9A9A9A;
     private static final int GRID_BG = 0x30FFFFFF;
+    /** Amber, for an item several branches arrive at. Reads as "note this" without shouting. */
+    private static final int BORDER_SHARED = 0xFFC8A050;
+    private static final int LINK_HIGHLIGHT = 0xFFFFD98A;
 
     private static boolean autoOpenedFilters;
 
@@ -144,9 +151,19 @@ public class ProcessGraphScreen extends Screen {
         addRenderableWidget(Button.builder(Component.literal("Root"), b -> focusIndex(0))
                 .bounds(x, y, 38, 20).build());
         x += 42;
-        addRenderableWidget(Button.builder(Component.literal("Filters"), b -> openFilters())
-                .bounds(x, y, 50, 20).build());
-        x += 54;
+        if (!graph.isRoute()) {
+            // A route is a fixed answer; re-filtering would rebuild the walk it is not.
+            addRenderableWidget(Button.builder(Component.literal("Filters"), b -> openFilters())
+                    .bounds(x, y, 50, 20).build());
+            x += 54;
+        } else if (RouteBuilder.canDeepen(graph.routeEscalation())) {
+            // Retrying with raised budgets, in the one place you find out you needed to. Telling
+            // someone to go edit a config file and repeat the whole gesture is worse advice.
+            addRenderableWidget(Button.builder(Component.literal("Deeper"),
+                            b -> ProcessTreeNavigation.deepenRoute())
+                    .bounds(x, y, 50, 20).build());
+            x += 54;
+        }
         addRenderableWidget(Button.builder(Component.literal("Back"), b -> goBack())
                 .bounds(x, y, 40, 20).build());
         x += 44;
@@ -160,7 +177,8 @@ public class ProcessGraphScreen extends Screen {
             framed = true;
         }
 
-        if (!autoOpenedFilters && ProcessSearchConfig.treeIncludedCategories().isEmpty()) {
+        if (!graph.isRoute() && !autoOpenedFilters
+                && ProcessSearchConfig.treeIncludedCategories().isEmpty()) {
             autoOpenedFilters = true;
             openFilters();
         }
@@ -195,11 +213,34 @@ public class ProcessGraphScreen extends Screen {
         int y;
         boolean isFocus;
         boolean isParent;
+        /**
+         * How many places this same item is drawn in the current view, when more than one.
+         *
+         * <p>The walk deduplicates items by registry key, so a node reached down two branches is
+         * one {@link ItemNode} with two parents -- a DAG, drawn as a tree. Until now that showed as
+         * the same item appearing twice with nothing saying they were the same thing, which is
+         * exactly backwards: convergence is the interesting part. An intermediate that several
+         * branches arrive at is the one worth automating.
+         */
+        int copies = 1;
     }
 
     private record Crumb(ItemNode node, int index, int left, int right) {}
 
+    /**
+     * Rows to draw.
+     *
+     * <p>For a walk this is the configured depth. For a route it is the chain's own length, because
+     * {@code treeViewLayers} is clamped to 9 and an eight-step route would otherwise truncate at
+     * step four with nothing saying so. A route has a fan-out of one, so twenty rows cost almost
+     * nothing and stay legible once zoomed out.
+     */
     private int viewLayers() {
+        if (graph.isRoute()) {
+            // Two rows per step -- item, machine -- plus the row the source sits on. Never fewer
+            // than a walk would draw, because expanding a step outward has to have somewhere to go.
+            return Math.max(graph.routeSteps() * 2 + 1, ProcessSearchConfig.treeViewLayers());
+        }
         return ProcessSearchConfig.treeViewLayers();
     }
 
@@ -326,6 +367,35 @@ public class ProcessGraphScreen extends Screen {
             int layerY = node.row * layerStride() + node.gridRow * gridRowStride();
             node.y = down ? layerY : -layerY;
         }
+        countCopies();
+    }
+
+    /**
+     * Marks items drawn in more than one place.
+     *
+     * <p>Counted over what was actually laid out rather than read off {@link ItemNode#isRepeat()},
+     * because the two answer different questions. That flag says the walk met the item twice
+     * somewhere; this says you can see it twice right now, which is what the badge is claiming.
+     */
+    private void countCopies() {
+        Map<Object, Integer> byKey = new HashMap<>();
+        for (Placed node : placed) {
+            if (node.kind == Kind.ITEM && node.item != null) {
+                byKey.merge(node.item.key, 1, Integer::sum);
+            }
+        }
+        for (Placed node : placed) {
+            node.copies = node.kind == Kind.ITEM && node.item != null
+                    ? byKey.getOrDefault(node.item.key, 1) : 1;
+        }
+    }
+
+    /** True when this is another drawing of whatever is under the cursor. */
+    private boolean sharesHoveredItem(Placed node) {
+        return hovered != null && hovered != node
+                && hovered.kind == Kind.ITEM && node.kind == Kind.ITEM
+                && hovered.item != null && node.item != null
+                && hovered.item.key.equals(node.item.key);
     }
 
     /**
@@ -761,9 +831,33 @@ public class ProcessGraphScreen extends Screen {
     }
 
     private void drawEmptyHint(GuiGraphics graphics) {
-        String line = ProcessSearchConfig.treeIncludedCategories().isEmpty()
-                ? "No machines enabled yet — press Filters to choose which ones to follow"
-                : "No enabled machine touches this item — try Filters, or a different item";
+        String line;
+        if (graph.isRoute()) {
+            boolean more = RouteBuilder.canDeepen(graph.routeEscalation());
+            line = switch (graph.routeOutcome()) {
+                // The four outcomes need different advice. Saying "no route" when the truth is
+                // "not within eight steps" sends someone looking for a path they already have.
+                case STEP_LIMIT -> "No route within " + (graph.routeEscalation() > 0
+                        ? "the steps tried so far" : ProcessSearchConfig.routeMaxSteps() + " steps")
+                        + (more ? " \u2014 press Deeper to look further"
+                        : " \u2014 that is the step ceiling");
+                case BUDGET_EXHAUSTED -> "The search ran out of room before finding one"
+                        + (more ? " \u2014 press Deeper to widen it"
+                        : " \u2014 that is the search ceiling");
+                case TIME_LIMIT -> "The search ran out of time"
+                        + (more ? " \u2014 press Deeper to give it longer"
+                        : " \u2014 that is the time ceiling");
+                case NO_PATH -> ProcessSearchConfig.routeRespectCategoryFilter()
+                        ? "Nothing connects them using only the machines enabled in Filters"
+                        : "Nothing connects these two";
+                // A found route always has a step, so this is the degenerate same-item case.
+                default -> "That is already what you have";
+            };
+        } else if (ProcessSearchConfig.treeIncludedCategories().isEmpty()) {
+            line = "No machines enabled yet — press Filters to choose which ones to follow";
+        } else {
+            line = "No enabled machine touches this item — try Filters, or a different item";
+        }
         graphics.drawCenteredString(font, line, width / 2, CHROME_H + viewHeight() / 2 + 40, 0xFFB0B0B0);
     }
 
@@ -839,10 +933,18 @@ public class ProcessGraphScreen extends Screen {
         graphics.fill(x, y, x + w, y + h, background);
         // In compact, only focus and hover are outlined: a border on every box is noise at the zoom
         // where the icon is meant to be carrying it. Edge thickness, so it survives the scale.
-        boolean outlined = node == hovered || node.isFocus;
+        boolean linked = sharesHoveredItem(node);
+        boolean shared = node.copies > 1;
+        // A shared item is outlined even in compact mode: at that zoom the convergence is the only
+        // thing still worth reading, and it is exactly what a wall of identical icons hides.
+        boolean outlined = node == hovered || node.isFocus || linked || shared;
         if (!compact || outlined) {
-            int border = node == hovered ? BORDER_HOVER : node.isFocus ? BORDER_FOCUS : BORDER;
-            int t = compact ? edgeWidth() : 1;
+            int border = node == hovered ? BORDER_HOVER
+                    : linked ? LINK_HIGHLIGHT
+                    : node.isFocus ? BORDER_FOCUS
+                    : shared ? BORDER_SHARED
+                    : BORDER;
+            int t = compact || linked || shared ? edgeWidth() : 1;
             graphics.fill(x, y, x + w, y + t, border);
             graphics.fill(x, y + h - t, x + w, y + h, border);
             graphics.fill(x, y, x + t, y + h, border);
@@ -871,10 +973,16 @@ public class ProcessGraphScreen extends Screen {
         } else if (!node.isFocus && !node.isParent && node.item.canExpand()) {
             suffix = "+";
         }
+        if (node.kind == Kind.ITEM && node.copies > 1) {
+            // Replaces the "+" affordance rather than crowding beside it: that one says "there is
+            // more below", and this says something more useful about the same corner.
+            suffix = "×" + node.copies;
+        }
         if (suffix != null) {
             room -= font.width(suffix) + 4;
             graphics.drawString(font, suffix, x + w - 3 - font.width(suffix), y + 6,
-                    node.kind == Kind.MACHINE ? 0xFFB0C4DE : 0xFF909090, false);
+                    node.kind == Kind.MACHINE ? 0xFFB0C4DE
+                            : node.copies > 1 ? BORDER_SHARED : 0xFF909090, false);
         }
         graphics.drawString(font, font.plainSubstrByWidth(label, room), x + 21, y + 6,
                 0xFFE0E0E0, false);
@@ -912,9 +1020,27 @@ public class ProcessGraphScreen extends Screen {
         graphics.hLine(0, width, CHROME_H, CHROME_LINE);
 
         StringBuilder status = new StringBuilder();
-        status.append(graph.nodeCount()).append(" walked");
-        if (graph.budgetExhausted()) {
-            status.append(", capped");
+        if (graph.isRoute()) {
+            status.append("route: ").append(stackName(graph.routeFrom()))
+                    .append(" → ").append(stackName(graph.routeTo()));
+            if (graph.routeOutcome() == RouteSearch.Outcome.FOUND) {
+                status.append(", ").append(graph.routeSteps())
+                        .append(graph.routeSteps() == 1 ? " step" : " steps");
+            } else {
+                // Which of the four stopped it, in two words. The full advice goes in the middle
+                // of the screen, where a failed route has nothing else to draw anyway.
+                status.append(", ").append(switch (graph.routeOutcome()) {
+                    case STEP_LIMIT -> "too far";
+                    case BUDGET_EXHAUSTED -> "search too wide";
+                    case TIME_LIMIT -> "took too long";
+                    default -> "no path";
+                });
+            }
+        } else {
+            status.append(graph.nodeCount()).append(" walked");
+            if (graph.budgetExhausted()) {
+                status.append(", capped");
+            }
         }
         if (!graph.indexReady()) {
             status.append(", index not ready — filters skipped");
@@ -961,7 +1087,9 @@ public class ProcessGraphScreen extends Screen {
 
         if (path.size() == 1 && placed.size() > 1) {
             // The only affordance otherwise is a small "+", which is not enough of a hint.
-            String hint = "click an item to follow it · click a machine for its recipes";
+            String hint = graph.isRoute()
+                    ? "click a machine for its recipes · right-click an item to explore from it"
+                    : "click an item to follow it · click a machine for its recipes";
             int hintWidth = font.width(hint);
             if (x + 16 + hintWidth < width - 4) {
                 graphics.drawString(font, hint, width - hintWidth - 6, y, 0xFF5E5E5E, false);
@@ -1004,6 +1132,16 @@ public class ProcessGraphScreen extends Screen {
                     lines.add(line(Component.literal("Click to follow, right-click to re-root")
                             .withStyle(ChatFormatting.DARK_GRAY)));
                 }
+                if (node.copies > 1) {
+                    lines.add(line(Component.literal("Drawn in " + node.copies
+                                    + " places here — several branches arrive at it")
+                            .withStyle(ChatFormatting.GOLD)));
+                } else if (node.item.isRepeat()) {
+                    // Met more than once by the walk, but the other sighting is outside the rows
+                    // currently drawn, so there is nothing on screen to point at.
+                    lines.add(line(Component.literal("Also reached elsewhere in this graph")
+                            .withStyle(ChatFormatting.DARK_GRAY)));
+                }
                 if (node.item.hiddenProcesses() > 0) {
                     lines.add(line(Component.literal("+" + node.item.hiddenProcesses()
                             + " machines beyond the walk cap").withStyle(ChatFormatting.YELLOW)));
@@ -1019,6 +1157,14 @@ public class ProcessGraphScreen extends Screen {
 
     private static ClientTooltipComponent line(Component text) {
         return ClientTooltipComponent.create(text.getVisualOrderText());
+    }
+
+    private static String stackName(EmiStack stack) {
+        try {
+            return stack == null ? "?" : stack.getName().getString();
+        } catch (RuntimeException | LinkageError e) {
+            return "?";
+        }
     }
 
     private static String name(ItemNode node) {
@@ -1037,7 +1183,10 @@ public class ProcessGraphScreen extends Screen {
         }
         double gx = (mouseX - offsetX) / scale;
         double gy = (mouseY - offsetY) / scale;
-        for (Placed node : placed) {
+        // Backwards, because drawNode paints in list order: the last one drawn is the one on top,
+        // and hovering has to pick that rather than whatever is underneath it.
+        for (int i = placed.size() - 1; i >= 0; i--) {
+            Placed node = placed.get(i);
             if (gx >= node.x && gx <= node.x + node.w && gy >= node.y && gy <= node.y + nodeH()) {
                 return node;
             }

@@ -50,7 +50,7 @@ public final class ProcessSearchConfig {
      * for anyone who already has the file -- the tree caps would have stayed at their old values on
      * every existing install. Version 2 raises them.
      */
-    private static final int CONFIG_VERSION = 7;
+    private static final int CONFIG_VERSION = 9;
 
     private static final char DEFAULT_MADE_BY = '>';
     private static final char DEFAULT_USED_IN = '<';
@@ -69,6 +69,21 @@ public final class ProcessSearchConfig {
     private static final String DEFAULT_PRODUCERS_KEY = "shift+period";
     private static final HotKey DEFAULT_CONSUMERS = new HotKey(GLFW.GLFW_KEY_COMMA, true, false, false);
     private static final HotKey DEFAULT_PRODUCERS = new HotKey(GLFW.GLFW_KEY_PERIOD, true, false, false);
+
+    /** R for route. Shifted so it cannot collide with a plain letter typed into EMI's search. */
+    /**
+     * Ceilings the "search deeper" retry escalates towards and never passes.
+     *
+     * <p>Retrying is what makes a step cap survivable, but an unbounded retry is a hang with extra
+     * clicks. These are the hard limits: the config decides where a search starts, these decide
+     * where it stops.
+     */
+    public static final int MAX_ROUTE_STEPS = 24;
+    public static final int MAX_ROUTE_NODES = 500000;
+    public static final int MAX_ROUTE_MILLIS = 5000;
+
+    private static final String DEFAULT_ROUTE_KEY = "shift+r";
+    private static final HotKey DEFAULT_ROUTE = new HotKey(GLFW.GLFW_KEY_R, true, false, false);
 
     private static final List<String> HELP = List.of(
             "Process Search -- four extra search prefixes for EMI.",
@@ -105,7 +120,16 @@ public final class ProcessSearchConfig {
             "involved, and how many ingredient slots there are -- then emits tokens, and optionally",
             "~ classes for the recipe's outputs. See the README for the full field list.",
             "Run /processsearch gaps to see which categories earned no facets beyond their own name;",
-            "that is the list of mods a rule would actually be worth writing for.");
+            "that is the list of mods a rule would actually be worth writing for.",
+            "Routes: hover what you have, press treeRouteKey, then press it again on what you want",
+            "and the tree shows a path between them. Pressing it twice on the same item cancels.",
+            "routeMaxSteps bounds how long a route may be -- past a handful it stops being advice.",
+            "routeMaxNodes is how many items the search may touch before giving up, and",
+            "routeMaxMillis bounds it by the clock instead -- that is the one that keeps a search",
+            "off the frame, since what a node costs to expand depends on how tag-heavy the pack is.",
+            "The Deeper button on the route screen retries with all three raised, up to a ceiling. routeRespectCategoryFilter turns treeIncludedCategories into a hard",
+            "constraint (\"route using only the machines I have\") instead of a preference between",
+            "equally short routes, which is what it is by default.");
 
     /** Defaults are the mods Prominence II: Hasturian Era actually ships. */
     private static final List<String> DEFAULT_DECORATIVE = List.of(
@@ -141,6 +165,12 @@ public final class ProcessSearchConfig {
         boolean enableProcessTree = true;
         String treeConsumersKey = DEFAULT_CONSUMERS_KEY;
         String treeProducersKey = DEFAULT_PRODUCERS_KEY;
+        String treeRouteKey = DEFAULT_ROUTE_KEY;
+        int routeMaxSteps = 8;
+        int routeMaxNodes = 20000;
+        int routeMaxMillis = 100;
+        /** A preference by default; see the accessor for why the tree's filter is opt-in and this is not. */
+        boolean routeRespectCategoryFilter = false;
         int treeViewLayers = 7;
         int treeVisibleMachines = 12;
         /** Six fits a 3x2 block, which is as much as one machine can show and stay scannable. */
@@ -170,6 +200,7 @@ public final class ProcessSearchConfig {
         transient char itemClass = DEFAULT_ITEM_CLASS;
         transient HotKey consumers = DEFAULT_CONSUMERS;
         transient HotKey producers = DEFAULT_PRODUCERS;
+        transient HotKey route = DEFAULT_ROUTE;
     }
 
     private static volatile Data data = resolved(new Data());
@@ -326,8 +357,12 @@ public final class ProcessSearchConfig {
         value.treeMaxItemsPerProcess = Math.max(1, Math.min(128, value.treeMaxItemsPerProcess));
         value.treeMinZoom = Math.max(0.03, Math.min(1.0, value.treeMinZoom));
         value.treeIncludedCategories = nonNull(value.treeIncludedCategories);
+        value.routeMaxSteps = Math.max(1, Math.min(MAX_ROUTE_STEPS, value.routeMaxSteps));
+        value.routeMaxNodes = Math.max(500, Math.min(MAX_ROUTE_NODES, value.routeMaxNodes));
+        value.routeMaxMillis = Math.max(10, Math.min(MAX_ROUTE_MILLIS, value.routeMaxMillis));
         value.consumers = HotKey.parse(value.treeConsumersKey, DEFAULT_CONSUMERS, "process tree <");
         value.producers = HotKey.parse(value.treeProducersKey, DEFAULT_PRODUCERS, "process tree >");
+        value.route = HotKey.parse(value.treeRouteKey, DEFAULT_ROUTE, "process tree route");
 
         value.madeBy = prefix(value.madeByPrefix, DEFAULT_MADE_BY, "made by");
         value.usedIn = prefix(value.usedInPrefix, DEFAULT_USED_IN, "used in");
@@ -370,6 +405,19 @@ public final class ProcessSearchConfig {
             // Widening again: the icons now grow most of the way to holding their size on screen,
             // so the useful part of the zoom range is further out than 0.15 could reach.
             value.treeMinZoom = Math.min(value.treeMinZoom, 0.08);
+        }
+        if (value.configVersion < 9) {
+            // New in 9; an older file has it at zero, which the clamp would read as 10ms.
+            value.routeMaxMillis = Math.max(value.routeMaxMillis, 100);
+        }
+        if (value.configVersion < 8) {
+            // New in 8; an older file has the field at its zero value, which the clamp would
+            // otherwise turn into a one-step cap and a 500-node budget.
+            value.routeMaxSteps = Math.max(value.routeMaxSteps, 8);
+            value.routeMaxNodes = Math.max(value.routeMaxNodes, 20000);
+            if (value.treeRouteKey == null || value.treeRouteKey.isBlank()) {
+                value.treeRouteKey = DEFAULT_ROUTE_KEY;
+            }
         }
         value.configVersion = CONFIG_VERSION;
     }
@@ -444,6 +492,11 @@ public final class ProcessSearchConfig {
         public boolean enableProcessTree;
         public String treeConsumersKey;
         public String treeProducersKey;
+        public String treeRouteKey;
+        public int routeMaxSteps;
+        public int routeMaxNodes;
+        public int routeMaxMillis;
+        public boolean routeRespectCategoryFilter;
         public int treeViewLayers;
         public int treeVisibleMachines;
         public int treeVisibleItemsPerMachine;
@@ -478,6 +531,11 @@ public final class ProcessSearchConfig {
         d.enableProcessTree = current.enableProcessTree;
         d.treeConsumersKey = current.treeConsumersKey;
         d.treeProducersKey = current.treeProducersKey;
+        d.treeRouteKey = current.treeRouteKey;
+        d.routeMaxSteps = current.routeMaxSteps;
+        d.routeMaxNodes = current.routeMaxNodes;
+        d.routeMaxMillis = current.routeMaxMillis;
+        d.routeRespectCategoryFilter = current.routeRespectCategoryFilter;
         d.treeViewLayers = current.treeViewLayers;
         d.treeVisibleMachines = current.treeVisibleMachines;
         d.treeVisibleItemsPerMachine = current.treeVisibleItemsPerMachine;
@@ -517,6 +575,11 @@ public final class ProcessSearchConfig {
         next.enableProcessTree = d.enableProcessTree;
         next.treeConsumersKey = d.treeConsumersKey;
         next.treeProducersKey = d.treeProducersKey;
+        next.treeRouteKey = d.treeRouteKey;
+        next.routeMaxSteps = d.routeMaxSteps;
+        next.routeMaxNodes = d.routeMaxNodes;
+        next.routeMaxMillis = d.routeMaxMillis;
+        next.routeRespectCategoryFilter = d.routeRespectCategoryFilter;
         next.treeViewLayers = d.treeViewLayers;
         next.treeVisibleMachines = d.treeVisibleMachines;
         next.treeVisibleItemsPerMachine = d.treeVisibleItemsPerMachine;
@@ -621,6 +684,45 @@ public final class ProcessSearchConfig {
     /** {@code >} -- what are all the ways to produce this. */
     public static HotKey treeProducersKey() {
         return data.producers;
+    }
+
+    /** The key that anchors a route, then runs it. */
+    public static HotKey treeRouteKey() {
+        return data.route;
+    }
+
+    /** The most machines a route may pass through. Past a handful it stops being advice. */
+    public static int routeMaxSteps() {
+        return data.routeMaxSteps;
+    }
+
+    /** Distinct items a route search may touch across both frontiers before giving up. */
+    public static int routeMaxNodes() {
+        return data.routeMaxNodes;
+    }
+
+    /**
+     * Wall clock a route search may spend, in milliseconds.
+     *
+     * <p>The bound that actually protects the frame. Steps and nodes are both poor proxies for
+     * cost, because what a node costs to expand depends entirely on how tag-heavy the pack is --
+     * one recipe taking a large tag contributes dozens of predecessors at once.
+     */
+    public static int routeMaxMillis() {
+        return data.routeMaxMillis;
+    }
+
+    /**
+     * Whether {@link #treeIncludedCategories()} is a hard constraint on routes rather than a
+     * preference between equally short ones.
+     *
+     * <p>Off by default, which is the opposite of how the same list works for the tree, and
+     * deliberately so: the tree fans out exponentially and needs an opt-in list to stay finite,
+     * while a route is a targeted question already bounded by the node budget. Defaulting a fresh
+     * install to "no machines enabled" would mean routing found nothing at all.
+     */
+    public static boolean routeRespectCategoryFilter() {
+        return data.routeRespectCategoryFilter;
     }
 
     /** Rendered rows including the focus: focus, machines, items, machines, items. */

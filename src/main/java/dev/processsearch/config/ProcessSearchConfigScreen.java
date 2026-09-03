@@ -115,6 +115,44 @@ public final class ProcessSearchConfigScreen {
                 .setSaveConsumer(v -> draft.treeProducersKey = v)
                 .build());
 
+        category.addEntry(entry.startStrField(Component.literal("Key for routing (A to B)"),
+                        draft.treeRouteKey)
+                .setDefaultValue("shift+r")
+                .setTooltip(Component.literal("Press on what you have, then on what you want."),
+                        Component.literal("Pressing twice on the same item cancels."))
+                .setSaveConsumer(v -> draft.treeRouteKey = v)
+                .build());
+        category.addEntry(entry.startIntSlider(Component.literal("Route: max steps"),
+                        draft.routeMaxSteps, 1, 24)
+                .setDefaultValue(8)
+                .setTooltip(Component.literal("The most machines a route may pass through."),
+                        Component.literal("Raise it if a distant target reports the step limit."))
+                .setSaveConsumer(v -> draft.routeMaxSteps = v)
+                .build());
+        category.addEntry(entry.startIntField(Component.literal("Route: search budget"),
+                        draft.routeMaxNodes)
+                .setMin(500).setMax(500000)
+                .setDefaultValue(20000)
+                .setTooltip(Component.literal("Items the search may touch before giving up."))
+                .setSaveConsumer(v -> draft.routeMaxNodes = v)
+                .build());
+        category.addEntry(entry.startIntSlider(Component.literal("Route: time budget (ms)"),
+                        draft.routeMaxMillis, 10, 5000)
+                .setDefaultValue(100)
+                .setTooltip(Component.literal("The bound that keeps a search off the frame."),
+                        Component.literal("Steps and nodes are poor proxies for cost; what a node"),
+                        Component.literal("costs to expand depends on how tag-heavy the pack is."))
+                .setSaveConsumer(v -> draft.routeMaxMillis = v)
+                .build());
+        category.addEntry(entry.startBooleanToggle(Component.literal("Route: only enabled machines"),
+                        draft.routeRespectCategoryFilter)
+                .setDefaultValue(false)
+                .setTooltip(Component.literal("Off: routes may use any machine, and the Filters"),
+                        Component.literal("list only breaks ties between equally short routes."),
+                        Component.literal("On: routes use only what you ticked in Filters."))
+                .setSaveConsumer(v -> draft.routeRespectCategoryFilter = v)
+                .build());
+
         category.addEntry(entry.startIntSlider(Component.literal("Layers drawn"),
                         draft.treeViewLayers, 1, 9)
                 .setDefaultValue(7)

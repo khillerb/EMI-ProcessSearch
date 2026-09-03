@@ -3,6 +3,7 @@ package dev.processsearch.search;
 import dev.emi.emi.search.EmiSearch;
 import dev.processsearch.ProcessSearch;
 import dev.processsearch.ProcessSearchConfig;
+import dev.processsearch.emi.EmiCompat;
 
 /**
  * Says out loud whether the search mixin actually applied.
@@ -26,6 +27,7 @@ public final class SearchHook {
     /** Called from the mixin, so reaching it at all is the proof. */
     public static void markInstalled() {
         installed = true;
+        EmiCompat.reached(EmiCompat.HOOK_SEARCH);
     }
 
     public static boolean isInstalled() {

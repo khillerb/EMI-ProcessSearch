@@ -7,6 +7,7 @@ import dev.emi.emi.api.EmiApi;
 import dev.emi.emi.api.recipe.EmiRecipe;
 import dev.emi.emi.api.recipe.EmiRecipeCategory;
 import dev.processsearch.ProcessSearch;
+import dev.processsearch.emi.EmiCompat;
 import dev.processsearch.recipe.RecipeFilter;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -33,6 +34,8 @@ public class EmiApiMixin {
             at = @At("HEAD"), argsOnly = true, index = 0, remap = false)
     private static Map<EmiRecipeCategory, List<EmiRecipe>> processsearch$narrowPages(
             Map<EmiRecipeCategory, List<EmiRecipe>> pages) {
+        // Reaching this at all is the proof the mixin applied; /processsearch compat reports it.
+        EmiCompat.reached(EmiCompat.HOOK_PAGES);
         try {
             return RecipeFilter.apply(pages);
         } catch (RuntimeException | LinkageError e) {

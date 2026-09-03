@@ -1,5 +1,7 @@
 package dev.processsearch.input;
 
+import dev.processsearch.emi.EmiCompat;
+
 /**
  * Records that the process-tree key hook is live.
  *
@@ -19,6 +21,7 @@ public final class KeyHook {
     /** Called from the mixin, so reaching it at all is the proof. */
     public static void markInstalled() {
         seen = true;
+        EmiCompat.reached(EmiCompat.HOOK_KEYS);
     }
 
     public static boolean hasFired() {

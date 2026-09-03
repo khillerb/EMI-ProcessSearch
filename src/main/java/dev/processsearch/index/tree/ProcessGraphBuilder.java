@@ -48,17 +48,17 @@ public final class ProcessGraphBuilder {
     /** Opt-in: a machine is followed only if it is in here. Empty means the graph is just the root. */
     private final Set<String> includedCategories = Set.copyOf(ProcessSearchConfig.treeIncludedCategories());
     private final boolean hideIdentity = ProcessSearchConfig.treeHideIdentityRecipes();
-    /** Identity detection resolves tag ingredients, so a node with hundreds of recipes memoises. */
-    private final Map<EmiRecipe, Boolean> identityCache = new IdentityHashMap<>();
-
-    private static final int MAX_IDENTITY_OUTPUTS = 2;
-    private static final int MAX_IDENTITY_INPUT_STACKS = 64;
+    /** Shared with the route search, which drops the same steps for the same reason. */
+    private final IdentityRecipes identity = new IdentityRecipes();
 
     private final int maxProcesses = ProcessSearchConfig.treeMaxProcessesPerItem();
     private final int maxItems = ProcessSearchConfig.treeMaxItemsPerProcess();
     private final int maxNodes = ProcessSearchConfig.treeMaxNodes();
 
     private final Map<EmiRecipeCategory, EmiIngredient> icons = new HashMap<>();
+
+    /** False when the query needed the item index and it was not built; the screen says so. */
+    private boolean filtersUsable = true;
 
     private ProcessGraphBuilder(EmiRecipeManager manager, Direction direction, List<Clause> clauses,
                                 EmiSearch.CompiledQuery exclusionQuery,
@@ -81,6 +81,23 @@ public final class ProcessGraphBuilder {
         if (manager == null || rootStack == null) {
             return null;
         }
+        ProcessGraphBuilder builder = forDirection(manager, direction);
+        ProcessGraph graph = builder.walk(rootStack, ProcessIndex.currentFilterText(),
+                ProcessSearchConfig.treeWalkHops());
+        if (graph != null && !builder.filtersUsable) {
+            graph.markIndexNotReady();
+        }
+        return graph;
+    }
+
+    /**
+     * A builder configured for the current search box, with no graph of its own yet.
+     *
+     * <p>Shared with routing: attaching one of these to a route graph is what lets a step expand
+     * outward in place, so the route stays on screen as the spine while you look at what branches
+     * off it.
+     */
+    static ProcessGraphBuilder forDirection(EmiRecipeManager manager, Direction direction) {
         String query = ProcessIndex.currentFilterText();
         List<Clause> clauses = FacetQueryClauses.parse(query);
 
@@ -89,17 +106,14 @@ public final class ProcessGraphBuilder {
         // admits everything, because "did not match" and "could not tell" look identical to EMI's
         // negation. So refuse, and let the screen say so.
         boolean needsIndex = !clauses.isEmpty() || FacetQueryClauses.mentionsItemClass(query);
-        boolean filtersUsable = ProcessIndex.isReady() || !needsIndex;
+        boolean usable = ProcessIndex.isReady() || !needsIndex;
 
         ProcessGraphBuilder builder = new ProcessGraphBuilder(manager, direction,
-                filtersUsable ? clauses : List.of(),
-                filtersUsable ? compile(FacetQueryClauses.itemExclusions(query)) : null,
-                filtersUsable ? compile(FacetQueryClauses.itemRetention(query)) : null);
-        ProcessGraph graph = builder.walk(rootStack, query, ProcessSearchConfig.treeWalkHops());
-        if (graph != null && !filtersUsable) {
-            graph.markIndexNotReady();
-        }
-        return graph;
+                usable ? clauses : List.of(),
+                usable ? compile(FacetQueryClauses.itemExclusions(query)) : null,
+                usable ? compile(FacetQueryClauses.itemRetention(query)) : null);
+        builder.filtersUsable = usable;
+        return builder;
     }
 
     /**
@@ -202,6 +216,14 @@ public final class ProcessGraphBuilder {
             }
         }
 
+        // Categories this node already shows. Empty for a walk, since a node is only ever
+        // expanded once -- but a route arrives with one machine per step already in place, and
+        // expanding one would otherwise draw that same machine twice, side by side.
+        Set<EmiRecipeCategory> existing = new HashSet<>();
+        for (ProcessNode process : node.processes()) {
+            existing.add(process.category);
+        }
+
         Map<EmiRecipeCategory, List<EmiRecipe>> byCategory = new LinkedHashMap<>();
         for (EmiRecipe recipe : recipes) {
             EmiRecipeCategory category = recipe == null ? null : recipe.getCategory();
@@ -212,10 +234,11 @@ public final class ProcessGraphBuilder {
             // Filters panel lists every machine that touches what has been walked, so there is
             // always something to tick in even when nothing is enabled yet.
             graph.countEncountered(category, 1);
-            if (!includedCategories.contains(category.getId().toString())) {
+            if (!includedCategories.contains(category.getId().toString())
+                    || existing.contains(category)) {
                 continue;
             }
-            if (hideIdentity && isIdentity(recipe)) {
+            if (hideIdentity && identity.test(recipe)) {
                 continue;
             }
             byCategory.computeIfAbsent(category, k -> new ArrayList<>()).add(recipe);
@@ -408,73 +431,6 @@ public final class ProcessGraphBuilder {
         }
         try {
             return exclusionQuery.test(stack);
-        } catch (RuntimeException | LinkageError e) {
-            return false;
-        }
-    }
-
-    /**
-     * True when every output is something the recipe also consumes.
-     *
-     * <p>Which is precisely anvil repairing, grindstone and enchanting: steps that hand back an item
-     * of the same kind and so loop tools endlessly back on themselves. Because keys come from
-     * {@link Scan#key}, an enchanted sword and a plain one are the same item here, which is what
-     * makes enchanting fall out of this rule rather than needing to be named.
-     */
-    private boolean isIdentity(EmiRecipe recipe) {
-        Boolean cached = identityCache.get(recipe);
-        if (cached != null) {
-            return cached;
-        }
-        boolean identity = computeIdentity(recipe);
-        identityCache.put(recipe, identity);
-        return identity;
-    }
-
-    private boolean computeIdentity(EmiRecipe recipe) {
-        try {
-            List<EmiStack> outputs = recipe.getOutputs();
-            List<EmiIngredient> inputs = recipe.getInputs();
-            if (outputs == null || outputs.isEmpty() || inputs == null || inputs.isEmpty()) {
-                return false;
-            }
-            // Two cheap gates before the expensive part. A repair-shaped recipe hands back a single
-            // item and takes a handful of specific ones; anything with several outputs, or an input
-            // that is a large tag, is a real transformation and not worth flattening to confirm.
-            if (outputs.size() > MAX_IDENTITY_OUTPUTS) {
-                return false;
-            }
-            Set<Object> inputKeys = new HashSet<>();
-            for (EmiIngredient ingredient : inputs) {
-                if (ingredient == null) {
-                    continue;
-                }
-                List<EmiStack> stacks = ingredient.getEmiStacks();
-                if (stacks.size() > MAX_IDENTITY_INPUT_STACKS) {
-                    return false;
-                }
-                for (EmiStack stack : stacks) {
-                    Object key = Scan.key(stack);
-                    if (key != null) {
-                        inputKeys.add(key);
-                    }
-                }
-            }
-            if (inputKeys.isEmpty()) {
-                return false;
-            }
-            boolean sawOutput = false;
-            for (EmiStack output : outputs) {
-                Object key = Scan.key(output);
-                if (key == null) {
-                    continue;
-                }
-                sawOutput = true;
-                if (!inputKeys.contains(key)) {
-                    return false;
-                }
-            }
-            return sawOutput;
         } catch (RuntimeException | LinkageError e) {
             return false;
         }

@@ -19,6 +19,7 @@ import dev.emi.emi.runtime.EmiReloadManager;
 import dev.emi.emi.search.EmiSearch;
 import dev.processsearch.ProcessSearch;
 import dev.processsearch.ProcessSearchConfig;
+import dev.processsearch.emi.EmiCompat;
 import dev.processsearch.index.sources.CreateFacets;
 import dev.processsearch.index.sources.MachineRecipeFacets;
 import dev.processsearch.index.sources.RuleFacets;
@@ -316,6 +317,7 @@ public final class ProcessIndex {
         }
 
         SearchHook.probeOnce();
+        EmiCompat.reportOnce();
 
         Set<String> excluded = Set.copyOf(ProcessSearchConfig.excludedCategories());
         List<EmiRecipeCategory> found = new ArrayList<>(all.size());

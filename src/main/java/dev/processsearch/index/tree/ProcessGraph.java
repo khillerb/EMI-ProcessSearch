@@ -29,6 +29,26 @@ public final class ProcessGraph {
     private ItemNode root;
     private ProcessGraphBuilder builder;
 
+    /**
+     * Set when this graph is a route rather than a walk.
+     *
+     * <p>Two things change. The screen draws the whole chain instead of stopping at
+     * {@code treeViewLayers} -- which is clamped to 9, so an eight-step route would otherwise
+     * silently truncate halfway. And the status line reports the endpoints rather than a node
+     * count, because "31 walked" says nothing useful about a route.
+     */
+    private boolean route;
+    private EmiStack routeFrom;
+    private EmiStack routeTo;
+    private int routeSteps;
+    /**
+     * Why the search stopped, kept so a failed route is still a screen with a Deeper button on it
+     * rather than a line of chat you cannot act on.
+     */
+    private RouteSearch.Outcome routeOutcome = RouteSearch.Outcome.FOUND;
+    /** How many times Deeper has already been pressed for this pair. */
+    private int routeEscalation;
+
     private int nodeCount;
     private int deepest;
     private boolean budgetExhausted;
@@ -85,6 +105,32 @@ public final class ProcessGraph {
 
     public Map<EmiRecipeCategory, Integer> encountered() {
         return encountered;
+    }
+
+    /** True when this is a found path from one item to another, not a walk outward from one. */
+    public boolean isRoute() {
+        return route;
+    }
+
+    public EmiStack routeFrom() {
+        return routeFrom;
+    }
+
+    public EmiStack routeTo() {
+        return routeTo;
+    }
+
+    /** Machines between the two ends. */
+    public int routeSteps() {
+        return routeSteps;
+    }
+
+    public RouteSearch.Outcome routeOutcome() {
+        return routeOutcome;
+    }
+
+    public int routeEscalation() {
+        return routeEscalation;
     }
 
     /**
@@ -150,6 +196,16 @@ public final class ProcessGraph {
 
     void markIndexNotReady() {
         indexReady = false;
+    }
+
+    void markRoute(EmiStack from, EmiStack to, int steps, RouteSearch.Outcome outcome,
+                   int escalation) {
+        this.route = true;
+        this.routeFrom = from;
+        this.routeTo = to;
+        this.routeSteps = steps;
+        this.routeOutcome = outcome;
+        this.routeEscalation = escalation;
     }
 
     void countEncountered(EmiRecipeCategory category, int recipes) {

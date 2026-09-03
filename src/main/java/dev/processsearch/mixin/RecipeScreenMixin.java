@@ -2,6 +2,7 @@ package dev.processsearch.mixin;
 
 import dev.emi.emi.api.widget.Bounds;
 import dev.emi.emi.screen.RecipeScreen;
+import dev.processsearch.emi.EmiCompat;
 import dev.processsearch.recipe.RecipeFilter;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
@@ -22,6 +23,8 @@ public class RecipeScreenMixin {
     @Inject(method = "render", at = @At("TAIL"))
     private void processsearch$drawFilterNotice(GuiGraphics graphics, int mouseX, int mouseY,
                                                 float partialTicks, CallbackInfo ci) {
+        // Reaching this at all is the proof the mixin applied; /processsearch compat reports it.
+        EmiCompat.reached(EmiCompat.HOOK_RECIPE_NOTICE);
         if (!RecipeFilter.isActive()) {
             return;
         }

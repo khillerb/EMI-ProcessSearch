@@ -50,6 +50,47 @@ public final class ProcessTreeNavigation {
         return show(stack, direction);
     }
 
+    /**
+     * Shows a route, keeping whatever was open on the back stack.
+     *
+     * <p>A route is an ordinary graph as far as everything downstream is concerned, so Back, the
+     * history stack and the recipe drill-down all work without knowing the difference.
+     */
+    public static boolean showRoute(ProcessGraph graph) {
+        if (graph == null) {
+            return false;
+        }
+        rememberOrigin();
+        if (current != null) {
+            push(current);
+        }
+        current = graph;
+        openGraphScreen();
+        return true;
+    }
+
+    /**
+     * Runs the current route again with raised budgets.
+     *
+     * <p>Replaces the graph rather than stacking it: Deeper is a better answer to the same
+     * question, not a new one, so Back should still go wherever you were before routing.
+     *
+     * @return true when a new attempt was made
+     */
+    public static boolean deepenRoute() {
+        if (current == null || !current.isRoute()) {
+            return false;
+        }
+        ProcessGraph deeper = RouteBuilder.route(current.routeFrom(), current.routeTo(),
+                current.routeEscalation() + 1);
+        if (deeper == null) {
+            return false;
+        }
+        current = deeper;
+        openGraphScreen();
+        return true;
+    }
+
     /** Re-roots the graph at another node, keeping the old one on the back stack. */
     public static boolean reroot(EmiStack stack, Direction direction) {
         if (current != null) {
@@ -142,6 +183,8 @@ public final class ProcessTreeNavigation {
         current = null;
         origin = null;
         HISTORY.clear();
+        // The anchor names a stack from the world being left, so it cannot outlive it either.
+        RouteAnchor.clear();
     }
 
     private static void push(ProcessGraph graph) {
@@ -155,6 +198,11 @@ public final class ProcessTreeNavigation {
         Screen screen = Minecraft.getInstance().screen;
         if (screen instanceof AbstractContainerScreen<?> container) {
             origin = container;
+            return;
+        }
+        if (origin != null) {
+            // Already know where we came from -- a route opened from inside the tree must still
+            // return to the inventory, not to the tree screen it replaced.
             return;
         }
         try {

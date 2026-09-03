@@ -209,6 +209,79 @@ active, so a file that failed to parse is visible rather than silent.
 The `dyeCategoryIds` and `dyeRecipePatterns` config keys still work — they are translated into
 rules at load, so `~dye` is now an ordinary rule rather than a special case in the index build.
 
+## Finding a route
+
+The three prefixes answer lookups — what makes a thing, what consumes it, what machine runs the
+process — and the tree extends those one hop at a time. Neither answers the question you actually
+have in a pack this size, which is a *path*:
+
+> I have copper. I want a Precision Mechanism. What do I build?
+
+Hover what you have and press **shift+R**. Hover what you want and press it again. The tree opens
+showing the chain between them, source at the top, target at the bottom, one machine per step.
+Pressing it twice on the same item cancels.
+
+Searching runs from **both ends at once**. A recipe graph branches hard in either direction, so a
+one-way search to depth eight is the branching factor to the eighth; meeting in the middle is two
+searches to depth four. It always expands whichever frontier is smaller, which matters because the
+two ends are rarely alike — an iron ingot is consumed by hundreds of recipes and produced by three.
+
+Routes are shortest-by-step-count, which reads as *fewest machines*. That is the honest default: the
+mod is client-only and cannot know what you have unlocked, so it will not pretend to rank by
+difficulty.
+
+### The machine filter works differently here
+
+For the tree, `treeIncludedCategories` is opt-in and starts empty, because a walk fans out
+exponentially and needs an allowlist to stay finite.
+
+For routes it is a **preference**, not a gate. Equally short routes are broken in favour of the
+machines you ticked, but a route may use anything. A targeted search is already bounded by its node
+budget, and defaulting a fresh install to "no machines enabled" would mean routing found nothing at
+all.
+
+Set `routeRespectCategoryFilter` to make it a hard constraint — *"route using only what I have
+built"* — which is the version you want once a pack is underway and you know you have Create but
+not Modern Industrialization.
+
+### Exploring off the route
+
+A route is an answer, not a dead end. Clicking a step expands it outward exactly like the tree
+does, with the route still on screen as the spine — so you can see what else that intermediate
+feeds, or what else could have made it, without losing the path you came for. Right-click still
+starts a fresh tree from any node.
+
+The machine a step already uses is not drawn twice when you expand it; the route's own choice stays
+as the single recipe that routes.
+
+### When there is no route
+
+Four different things can stop the search, they need different answers, and the mod says which:
+
+| What it says | What it means |
+|---|---|
+| *no path* | The reachable set was exhausted. Nothing connects them. |
+| *too far* | A route may exist, but longer than `routeMaxSteps`. |
+| *search too wide* | `routeMaxNodes` was spent first. |
+| *took too long* | `routeMaxMillis` was spent first. |
+
+Reporting "no route" when the truth is "not within eight steps" would send you looking for a path
+you already have, which is why they are kept apart.
+
+A failed search still opens the screen, because that is where the **Deeper** button is. It retries
+with all three budgets raised — four more steps, double the nodes, double the time — and you can
+press it again. There is a fixed ceiling it will not pass: retrying is what makes a step cap
+survivable, but an unbounded retry is just a hang with extra clicks.
+
+### Why the budget is a clock
+
+`routeMaxSteps` bounds the *answer*: past a handful of machines a route stops being advice.
+
+`routeMaxMillis` bounds the *search*, and it is the one that keeps a hitch off the frame. Steps and
+node counts are both poor proxies for cost, because what a single node costs to expand depends
+entirely on how tag-heavy the pack is — one recipe taking a large tag hands back dozens of
+predecessors at once. Counting items does not see that; the clock does.
+
 ## Filtering recipe pages
 
 Filtering the item grid never solved the whole problem: opening the uses of a Mechanical Mixer still
@@ -374,6 +447,23 @@ If the query needs the process index and it is not built yet, the header says
 `index not ready — filters skipped` rather than claiming a filter it did not apply. That case used
 to be silent *and* inverted: with no index, a negated class filter admitted everything.
 
+### Where branches converge
+
+Items are deduplicated by registry key, so a thing reached down two different branches is *one*
+node with two parents — the graph is a DAG drawn as a tree. That is what stops cobblestone → stone
+→ cobblestone from running forever, but until now it also meant the same item could appear twice on
+screen with nothing saying they were the same thing.
+
+An item drawn in more than one place is now outlined in amber and marked `×2`. Hovering any copy
+lights up every other copy.
+
+Convergence is the interesting part, not an artifact to hide: an intermediate that several branches
+arrive at is the one worth automating first. In compact mode the outline stays on even though labels
+are gone, because at that zoom it is the only thing still worth reading.
+
+An item whose other sighting is outside the rows currently drawn says so in its tooltip instead,
+since there is nothing on screen to point at.
+
 ### It skips the steps that go nowhere
 
 Anvil repairing, grindstone and enchanting hand back an item of the same kind they consumed, which
@@ -446,6 +536,7 @@ budget is doing its job.
 /processsearch stats            prefixes, hook state, index state, counts, build time
 /processsearch facets <text>    discover the searchable tokens
 /processsearch gaps             categories that earned no facets beyond their own name
+/processsearch compat           whether EMI's internals are still where this build left them
 /processsearch rebuild          reload the config, then drop and rebuild the index
 ```
 
@@ -453,6 +544,30 @@ budget is doing its job.
 what it cannot. It lists, biggest first, every category whose recipes contributed nothing but the
 category's own name — which is precisely the shortlist of mods a [facet rule](#writing-facet-rules)
 would be worth writing for. In a pack this size that list is not guessable, so it is measured.
+
+### When EMI moves
+
+This mod hooks EMI **internals**, not published API: the private `EmiApi.setPages`,
+`EmiSearch$CompiledQuery.addQuery`, `EmiScreenManager`'s key handling, the tooltip helper. The mixin
+config fails soft on purpose — an EMI update must not brick a live pack — and the price of that
+choice is that a moved target is completely silent. The prefixes would simply stop matching.
+
+`/processsearch compat` is the answer to *"it stopped working and I don't know why"*. It looks up
+every target by exact signature and reports one of three things:
+
+| | |
+|---|---|
+| `ok` | present, or the hook has actually fired |
+| `unproven` | present, but nothing has exercised it yet — usually fine, use the feature and re-run |
+| `missing` | gone. The named feature will not work; everything else still will |
+
+The middle state is deliberate. Some hooks cannot be probed at all — calling `keyPressed` to see
+whether the injection fires would run EMI's real key handling, and calling `setPages` would open a
+screen — so the honest answer is "not seen yet" rather than a guess.
+
+The same probes run as a **unit test against the vendored jar**, so bumping `libs/emi-*.jar` to a
+version that moved something fails the build rather than shipping. `fabric.mod.json` is also bounded
+to `<1.2.0`: a major EMI bump refuses to load rather than half-working.
 
 `stats` reports whether the search hook actually installed. That matters: the mixin config fails
 soft so an EMI update cannot brick a live pack, which means a missed hook would otherwise be
