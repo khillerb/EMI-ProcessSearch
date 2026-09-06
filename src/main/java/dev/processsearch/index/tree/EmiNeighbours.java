@@ -32,6 +32,8 @@ final class EmiNeighbours implements RouteSearch.Neighbours {
     private final EmiRecipeManager manager;
     private final IdentityRecipes identity = new IdentityRecipes();
     private final boolean hideIdentity;
+    /** Shared with the plan, so a route names the same alternatives a plan would. */
+    private final EquivalentMachines equivalents;
 
     /**
      * Categories the player ticked in the tree's Filters panel.
@@ -51,6 +53,7 @@ final class EmiNeighbours implements RouteSearch.Neighbours {
 
     EmiNeighbours(EmiRecipeManager manager) {
         this.manager = manager;
+        this.equivalents = new EquivalentMachines(manager);
         this.hideIdentity = ProcessSearchConfig.treeHideIdentityRecipes();
         this.preferred = Set.copyOf(ProcessSearchConfig.treeIncludedCategories());
         this.hardFilter = ProcessSearchConfig.routeRespectCategoryFilter();
@@ -68,6 +71,18 @@ final class EmiNeighbours implements RouteSearch.Neighbours {
     /** The stack a key was first seen as, for drawing the route afterwards. */
     EmiStack stackFor(Object key) {
         return stacks.get(key);
+    }
+
+    /**
+     * Other machines that would do this step of the route just as well.
+     *
+     * <p>Only asked once a route is found, for the handful of steps actually on it -- never during
+     * the search, where it would multiply the work for an answer nothing reads.
+     *
+     * @param producedKey what the step yields, which is the output the alternatives must also make
+     */
+    List<EmiRecipe> equivalentsFor(EmiRecipe recipe, Object producedKey) {
+        return equivalents.like(recipe, stacks.get(producedKey));
     }
 
     @Override

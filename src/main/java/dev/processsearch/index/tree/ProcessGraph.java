@@ -28,16 +28,18 @@ public final class ProcessGraph {
     private final Map<EmiRecipeCategory, Integer> encountered = new LinkedHashMap<>();
     private ItemNode root;
     private ProcessGraphBuilder builder;
+    private PlanSummary planSummary;
 
     /**
-     * Set when this graph is a route rather than a walk.
+     * What kind of answer this graph is, since the screen now varies three ways.
      *
-     * <p>Two things change. The screen draws the whole chain instead of stopping at
-     * {@code treeViewLayers} -- which is clamped to 9, so an eight-step route would otherwise
-     * silently truncate halfway. And the status line reports the endpoints rather than a node
-     * count, because "31 walked" says nothing useful about a route.
+     * <p>A WALK fans outward from one item and its children are <em>alternatives</em>. A ROUTE is
+     * a found path. A PLAN is a tree of prerequisites whose children are <em>requirements</em> --
+     * the same picture meaning the opposite thing, which is why the screen has to know.
      */
-    private boolean route;
+    public enum Mode { WALK, ROUTE, PLAN }
+
+    private Mode mode = Mode.WALK;
     private EmiStack routeFrom;
     private EmiStack routeTo;
     private int routeSteps;
@@ -46,6 +48,7 @@ public final class ProcessGraph {
      * rather than a line of chat you cannot act on.
      */
     private RouteSearch.Outcome routeOutcome = RouteSearch.Outcome.FOUND;
+    private PlanSearch.Outcome planOutcome = PlanSearch.Outcome.RESOLVED;
     /** How many times Deeper has already been pressed for this pair. */
     private int routeEscalation;
 
@@ -107,10 +110,48 @@ public final class ProcessGraph {
         return encountered;
     }
 
+    public Mode mode() {
+        return mode;
+    }
+
     /** True when this is a found path from one item to another, not a walk outward from one. */
     public boolean isRoute() {
-        return route;
+        return mode == Mode.ROUTE;
     }
+
+    /** True when this is a tree of prerequisites: every child of a machine is required. */
+    public boolean isPlan() {
+        return mode == Mode.PLAN;
+    }
+
+    /**
+     * True for the answers that are fixed rather than explorable.
+     *
+     * <p>Both are drawn to their own depth rather than the configured one, and neither offers the
+     * Filters button, because re-filtering would rebuild a walk that this is not.
+     */
+    public boolean isFixed() {
+        return mode != Mode.WALK;
+    }
+
+    /** Machines the plan needs built, raw materials it bottoms out at, branches it gave up on. */
+    public PlanSummary planSummary() {
+        return planSummary;
+    }
+
+    /**
+     * The actionable half of a plan, derived once when it is built.
+     *
+     * @param machines  distinct recipe categories, which is the list of things to build
+     * @param raw       distinct items nothing makes, which is the list of things to go and get
+     * @param missing   distinct items the search gave up on
+     * @param deepest   how many tiers the plan runs to
+     */
+    public record PlanSummary(java.util.List<EmiRecipeCategory> machines,
+                              java.util.List<EmiStack> raw,
+                              java.util.List<EmiStack> missing,
+                              java.util.Map<EmiRecipeCategory, EmiRecipeCategory> alternatives,
+                              int deepest) {}
 
     public EmiStack routeFrom() {
         return routeFrom;
@@ -143,6 +184,23 @@ public final class ProcessGraph {
     }
 
     // ------------------------------------------------------------ build-time internals
+
+    /**
+     * A node that is deliberately <em>not</em> deduplicated.
+     *
+     * <p>Only for plans. Everything needs iron, so a plan built through {@link #nodeFor} would
+     * hand the same node several parents -- and the screen's layout recurses through
+     * {@code processes()}, which turns sharing into combinatorial work and puts a cycle one wrong
+     * edge away from a stack overflow. A plan is a tree and is built as one; the screen's
+     * per-key badge still marks an item that appears in several branches, which in a plan is the
+     * most useful thing on screen rather than an artifact.
+     */
+    ItemNode newNode(Object key, EmiStack stack, int depth) {
+        ItemNode created = new ItemNode(key, stack, depth);
+        nodeCount++;
+        deepest = Math.max(deepest, depth);
+        return created;
+    }
 
     ItemNode nodeFor(Object key, EmiStack stack, int depth) {
         ItemNode existing = byKey.get(key);
@@ -198,9 +256,25 @@ public final class ProcessGraph {
         indexReady = false;
     }
 
+    void markPlan(EmiStack target, PlanSearch.Outcome outcome, PlanSummary summary,
+                  int escalation) {
+        this.mode = Mode.PLAN;
+        this.routeFrom = target;
+        this.routeTo = target;
+        this.planOutcome = outcome;
+        this.planSummary = summary;
+        // Shared with routing's counter: a graph is one or the other, never both, and one field
+        // keeps the screen from having to ask which kind it is before offering Deeper.
+        this.routeEscalation = escalation;
+    }
+
+    public PlanSearch.Outcome planOutcome() {
+        return planOutcome;
+    }
+
     void markRoute(EmiStack from, EmiStack to, int steps, RouteSearch.Outcome outcome,
                    int escalation) {
-        this.route = true;
+        this.mode = Mode.ROUTE;
         this.routeFrom = from;
         this.routeTo = to;
         this.routeSteps = steps;

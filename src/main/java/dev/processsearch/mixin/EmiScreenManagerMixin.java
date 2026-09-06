@@ -6,6 +6,7 @@ import dev.emi.emi.screen.EmiScreenManager;
 import dev.processsearch.ProcessSearchConfig;
 import dev.processsearch.index.tree.Direction;
 import dev.processsearch.index.tree.ProcessTreeNavigation;
+import dev.processsearch.index.tree.PlanAnchor;
 import dev.processsearch.index.tree.RouteAnchor;
 import dev.processsearch.input.KeyHook;
 import org.spongepowered.asm.mixin.Mixin;
@@ -39,8 +40,9 @@ public class EmiScreenManagerMixin {
         }
 
         boolean routing = ProcessSearchConfig.treeRouteKey().matches(keyCode, modifiers);
+        boolean planning = !routing && ProcessSearchConfig.treePlanKey().matches(keyCode, modifiers);
         Direction direction = null;
-        if (!routing) {
+        if (!routing && !planning) {
             if (ProcessSearchConfig.treeConsumersKey().matches(keyCode, modifiers)) {
                 direction = Direction.CONSUMERS;
             } else if (ProcessSearchConfig.treeProducersKey().matches(keyCode, modifiers)) {
@@ -60,9 +62,14 @@ public class EmiScreenManagerMixin {
             return;
         }
 
-        boolean handled = routing
-                ? RouteAnchor.press(hovered.getStack())
-                : ProcessTreeNavigation.open(hovered.getStack(), direction);
+        boolean handled;
+        if (routing) {
+            handled = RouteAnchor.press(hovered.getStack());
+        } else if (planning) {
+            handled = PlanAnchor.press(hovered.getStack());
+        } else {
+            handled = ProcessTreeNavigation.open(hovered.getStack(), direction);
+        }
         if (handled) {
             cir.setReturnValue(true);
         }

@@ -5,6 +5,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.List;
 import java.util.Set;
@@ -18,6 +19,8 @@ import dev.processsearch.index.tree.Direction;
 import dev.processsearch.index.tree.ItemNode;
 import dev.processsearch.index.tree.ProcessGraph;
 import dev.processsearch.index.tree.ProcessNode;
+import dev.processsearch.index.tree.PlanBuilder;
+import dev.processsearch.index.tree.PlanSearch;
 import dev.processsearch.index.tree.ProcessTreeNavigation;
 import dev.processsearch.index.tree.RouteBuilder;
 import dev.processsearch.index.tree.RouteSearch;
@@ -28,6 +31,7 @@ import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.inventory.tooltip.ClientTooltipComponent;
 import net.minecraft.network.chat.Component;
+import org.lwjgl.glfw.GLFW;
 
 /**
  * The overview: a focus neighbourhood several layers deep, not the whole graph.
@@ -48,6 +52,9 @@ public class ProcessGraphScreen extends Screen {
     private static final int GRID_ROW_STRIDE = NODE_H + 4;
     /** Three across, two down: six is as much as one machine can show and stay scannable. */
     private static final int GRID_COLS = 3;
+    /** Interchangeable machines, three across and three down before the rest become a chip. */
+    private static final int MACHINE_GRID_COLS = 3;
+    private static final int MACHINE_GRID_ROWS = 3;
     /** A "+N" chip says one number. Giving it a whole node's width was pure waste. */
     private static final int CHIP_W = 56;
     private static final int GROUP_GAP = 20;
@@ -78,6 +85,12 @@ public class ProcessGraphScreen extends Screen {
     private static final int FOCUS_BG = 0xE0454F2E;
     private static final int PARENT_BG = 0xC02A2A2A;
     private static final int PROCESS_BG = 0xE0263349;
+    /** A plan's machines, distinct from a walk's, because their children mean the opposite thing. */
+    private static final int PLAN_BG = 0xE03A2A45;
+    /** The runner-up machine: present, but not the one the plan costed. */
+    private static final int PLAN_ALT_BG = 0xC02E2436;
+    /** The same, for a walk or a route: interchangeable with the one beside it. */
+    private static final int PROCESS_ALT_BG = 0xC01E2839;
     private static final int CLUSTER_BG = 0xC03A3020;
     private static final int BORDER = 0xFF5A5A5A;
     private static final int BORDER_FOCUS = 0xFFD8D8A0;
@@ -139,28 +152,42 @@ public class ProcessGraphScreen extends Screen {
     protected void init() {
         int x = 4;
         int y = 3;
-        Direction other = graph.direction.opposite();
-        addRenderableWidget(Button.builder(
-                        Component.literal(other.symbol + " " + other.description),
-                        b -> ProcessTreeNavigation.reroot(graph.root().stack, other))
-                .bounds(x, y, 110, 20).build());
-        x += 114;
+        if (!graph.isFixed()) {
+            // Only a walk has a direction to flip. On a route or a plan this rebuilt the root as a
+            // walk, silently throwing away the answer you asked for -- and its label gave no hint
+            // that it would. Right-click on any node still starts a walk from it.
+            Direction other = graph.direction.opposite();
+            addRenderableWidget(Button.builder(
+                            Component.literal(other.symbol + " " + other.description),
+                            b -> ProcessTreeNavigation.reroot(graph.root().stack, other))
+                    .bounds(x, y, 110, 20).build());
+            x += 114;
+        }
         addRenderableWidget(Button.builder(Component.literal("Fit"), b -> frameView())
                 .bounds(x, y, 30, 20).build());
         x += 34;
         addRenderableWidget(Button.builder(Component.literal("Root"), b -> focusIndex(0))
                 .bounds(x, y, 38, 20).build());
         x += 42;
-        if (!graph.isRoute()) {
-            // A route is a fixed answer; re-filtering would rebuild the walk it is not.
+        if (graph.isPlan()) {
+            // The summary is the actionable half -- nobody builds from a graph -- so it gets the
+            // prime slot rather than being buried in a tooltip.
+            addRenderableWidget(Button.builder(Component.literal("Plan"),
+                            b -> minecraft.setScreen(new PlanSummaryPanel(this, graph)))
+                    .bounds(x, y, 44, 20).build());
+            x += 48;
+        } else if (!graph.isFixed()) {
+            // A found answer is fixed; re-filtering would rebuild the walk it is not.
             addRenderableWidget(Button.builder(Component.literal("Filters"), b -> openFilters())
                     .bounds(x, y, 50, 20).build());
             x += 54;
-        } else if (RouteBuilder.canDeepen(graph.routeEscalation())) {
+        }
+        if (canDeepen()) {
             // Retrying with raised budgets, in the one place you find out you needed to. Telling
-            // someone to go edit a config file and repeat the whole gesture is worse advice.
+            // someone to go edit a config file and repeat the whole gesture is worse advice --
+            // which is why a plan gets this too, not just a route.
             addRenderableWidget(Button.builder(Component.literal("Deeper"),
-                            b -> ProcessTreeNavigation.deepenRoute())
+                            b -> ProcessTreeNavigation.deepen())
                     .bounds(x, y, 50, 20).build());
             x += 54;
         }
@@ -177,7 +204,7 @@ public class ProcessGraphScreen extends Screen {
             framed = true;
         }
 
-        if (!graph.isRoute() && !autoOpenedFilters
+        if (!graph.isFixed() && !autoOpenedFilters
                 && ProcessSearchConfig.treeIncludedCategories().isEmpty()) {
             autoOpenedFilters = true;
             openFilters();
@@ -186,6 +213,17 @@ public class ProcessGraphScreen extends Screen {
 
     /** Where the button strip ends, so the status text can never be drawn on top of it. */
     private int buttonsRight;
+
+    /** True when this answer stopped short of something a bigger budget would have reached. */
+    private boolean canDeepen() {
+        if (!graph.isFixed()) {
+            return false;
+        }
+        return graph.isPlan()
+                ? graph.planOutcome() != PlanSearch.Outcome.RESOLVED
+                        && PlanBuilder.canDeepen(graph.routeEscalation())
+                : RouteBuilder.canDeepen(graph.routeEscalation());
+    }
 
     void openFilters() {
         minecraft.setScreen(new CategoryFilterPanel(this, graph));
@@ -213,6 +251,8 @@ public class ProcessGraphScreen extends Screen {
         int y;
         boolean isFocus;
         boolean isParent;
+        /** One of the interchangeable machines beside the one that carries the subtree. */
+        boolean equivalent;
         /**
          * How many places this same item is drawn in the current view, when more than one.
          *
@@ -236,10 +276,12 @@ public class ProcessGraphScreen extends Screen {
      * nothing and stay legible once zoomed out.
      */
     private int viewLayers() {
-        if (graph.isRoute()) {
-            // Two rows per step -- item, machine -- plus the row the source sits on. Never fewer
+        if (graph.isFixed()) {
+            // Two rows per tier -- item, machine -- plus the row the target sits on. Never fewer
             // than a walk would draw, because expanding a step outward has to have somewhere to go.
-            return Math.max(graph.routeSteps() * 2 + 1, ProcessSearchConfig.treeViewLayers());
+            int tiers = graph.isPlan() && graph.planSummary() != null
+                    ? graph.planSummary().deepest() : graph.routeSteps();
+            return Math.max(tiers * 2 + 1, ProcessSearchConfig.treeViewLayers());
         }
         return ProcessSearchConfig.treeViewLayers();
     }
@@ -362,12 +404,44 @@ public class ProcessGraphScreen extends Screen {
             }
         }
 
+        positionRows();
+        countCopies();
+    }
+
+    /**
+     * Turns rows and grid offsets into y coordinates.
+     *
+     * <p>Rows used to sit at a fixed stride apart, which worked while only the last layer stacked
+     * anything. A block of interchangeable machines stacks in the middle of the graph, so each row
+     * has to know how tall the row above actually turned out and start below it -- otherwise a
+     * three-high machine block reaches straight through the items beneath it.
+     */
+    private void positionRows() {
+        int rows = 0;
+        for (Placed node : placed) {
+            rows = Math.max(rows, node.row + 1);
+        }
+        if (rows == 0) {
+            return;
+        }
+        int[] tallest = new int[rows];
+        for (Placed node : placed) {
+            tallest[node.row] = Math.max(tallest[node.row], node.gridRow);
+        }
+
+        int[] top = new int[rows];
+        for (int row = 1; row < rows; row++) {
+            // A row occupies its own height plus whatever its grid stacked, and the next row starts
+            // clear of it -- never closer than the plain stride, so nothing shuffles up.
+            top[row] = top[row - 1]
+                    + Math.max(layerStride(), nodeH() + tallest[row - 1] * gridRowStride() + 12);
+        }
+
         boolean down = graph.direction.growsDown();
         for (Placed node : placed) {
-            int layerY = node.row * layerStride() + node.gridRow * gridRowStride();
+            int layerY = top[node.row] + node.gridRow * gridRowStride();
             node.y = down ? layerY : -layerY;
         }
-        countCopies();
     }
 
     /**
@@ -418,19 +492,34 @@ public class ProcessGraphScreen extends Screen {
         int machineCap = viewLayer == 1
                 ? (showAllMachines ? machines.size() : ProcessSearchConfig.treeVisibleMachines())
                 : DEEP_FANOUT;
-        int shownMachines = Math.min(machines.size(), machineCap);
+        // Machines that do the same job are drawn as one block rather than spread across the
+        // layer. In a big pack the same step is offered by three or four mods, and a row of
+        // near-identical boxes reads as four decisions when it is really one.
+        //
+        // The layer budget is spent per group rather than per machine, deliberately: a block of
+        // interchangeable machines is one thing to look at, so charging it four times would push
+        // genuinely different machines off the layer to make room for the same answer repeated.
+        List<List<ProcessNode>> groups = groupMachines(machines);
+        int shownGroups = Math.min(groups.size(), machineCap);
         if (viewLayer > 1) {
-            shownMachines = Math.min(shownMachines, Math.max(0, remaining[viewLayer + 1]));
-            remaining[viewLayer + 1] -= shownMachines;
+            shownGroups = Math.min(shownGroups, Math.max(0, remaining[viewLayer + 1]));
+            remaining[viewLayer + 1] -= shownGroups;
         }
 
         int cursor = left;
-        List<Placed> machineNodes = new ArrayList<>(shownMachines);
-        for (int i = 0; i < shownMachines; i++) {
-            cursor = layoutMachine(machines.get(i), viewLayer + 1, cursor, remaining, machineNodes);
+        List<Placed> machineNodes = new ArrayList<>(shownGroups);
+        for (int i = 0; i < shownGroups; i++) {
+            List<ProcessNode> group = groups.get(i);
+            int before = machineNodes.size();
+            cursor = layoutMachine(group.get(0), viewLayer + 1, cursor, remaining, machineNodes);
+            if (group.size() > 1 && machineNodes.size() > before) {
+                cursor = Math.max(cursor,
+                        layoutEquivalents(group, machineNodes.get(before), viewLayer + 1,
+                                machineNodes));
+            }
         }
 
-        int hiddenMachines = machines.size() - shownMachines;
+        int hiddenMachines = groups.size() - shownGroups;
         if (hiddenMachines > 0) {
             ItemNode holder = node;
             // At the focus there is room to simply show them; deeper, the way to see them all is
@@ -452,6 +541,76 @@ public class ProcessGraphScreen extends Screen {
         }
         self.x = centreOver(machineNodes, self.w);
         return self;
+    }
+
+    /**
+     * Places a group's interchangeable machines as a block beside the one carrying the subtree.
+     *
+     * <p>Three across and three down, because past nine "which of these" stops being a choice and
+     * starts being a list -- the rest collapse into a {@code +N} chip that opens the full set, the
+     * same bargain the item blocks already make.
+     *
+     * <p>Only the first machine of a group is expanded. The others lead to exactly the same items
+     * by definition, so drawing their subtrees would be the same picture two or three times over.
+     *
+     * @return the x this block reaches to
+     */
+    private int layoutEquivalents(List<ProcessNode> group, Placed primary, int viewLayer,
+                                  List<Placed> out) {
+        int shown = Math.min(group.size(), MACHINE_GRID_COLS * MACHINE_GRID_ROWS);
+        for (int i = 1; i < shown; i++) {
+            Placed cell = machine(group.get(i), rowFor(viewLayer));
+            cell.x = primary.x + (i % MACHINE_GRID_COLS) * breadthStride();
+            cell.gridRow = i / MACHINE_GRID_COLS;
+            cell.equivalent = true;
+            out.add(cell);
+        }
+        int hidden = group.size() - shown;
+        if (hidden > 0) {
+            List<ProcessNode> all = group;
+            Placed chip = cluster("+" + hidden, rowFor(viewLayer),
+                    () -> minecraft.setScreen(MachineChoicePanel.forGroup(this, graph, all)));
+            chip.x = primary.x + (shown % MACHINE_GRID_COLS) * breadthStride();
+            chip.gridRow = shown / MACHINE_GRID_COLS;
+            out.add(chip);
+        }
+        return primary.x + Math.min(group.size(), MACHINE_GRID_COLS) * breadthStride();
+    }
+
+    /**
+     * Partitions an item's machines into sets that do the same job, order preserved.
+     *
+     * <p>Two machines are interchangeable when they lead to exactly the same items. That is the
+     * right test in every mode and needs nothing mode-specific: following consumers it means both
+     * turn this into the same things, following producers it means both make it from the same
+     * things, and in a plan it means both need the same materials. A builder that already knows --
+     * a plan picked one recipe and passed over the runner-up -- says so with
+     * {@link ProcessNode#group()} instead.
+     */
+    private static List<List<ProcessNode>> groupMachines(List<ProcessNode> machines) {
+        Map<Object, List<ProcessNode>> byGroup = new LinkedHashMap<>();
+        for (ProcessNode machine : machines) {
+            byGroup.computeIfAbsent(groupKeyOf(machine), k -> new ArrayList<>()).add(machine);
+        }
+        return List.copyOf(byGroup.values());
+    }
+
+    private static Object groupKeyOf(ProcessNode machine) {
+        if (machine.group() != null) {
+            return machine.group();
+        }
+        List<ItemNode> items = machine.items();
+        if (items.isEmpty()) {
+            // Nothing to compare, so it stands alone rather than pooling with every other
+            // childless machine on the layer.
+            return machine;
+        }
+        List<String> keys = new ArrayList<>(items.size());
+        for (ItemNode item : items) {
+            keys.add(String.valueOf(item.key));
+        }
+        keys.sort(Comparator.naturalOrder());
+        return String.join("\u0000", keys);
     }
 
     /** The x that centres a box of width {@code w} over everything in {@code children}. */
@@ -832,7 +991,15 @@ public class ProcessGraphScreen extends Screen {
 
     private void drawEmptyHint(GuiGraphics graphics) {
         String line;
-        if (graph.isRoute()) {
+        if (graph.isPlan()) {
+            line = switch (graph.planOutcome()) {
+                case RESOLVED -> "Nothing makes this \u2014 go and get it";
+                case UNRESOLVABLE -> "No combination of recipes reaches anything obtainable";
+                default -> canDeepen()
+                        ? "Stopped before working this one out \u2014 press Deeper to look further"
+                        : "Stopped before working this one out \u2014 that is the plan ceiling";
+            };
+        } else if (graph.isRoute()) {
             boolean more = RouteBuilder.canDeepen(graph.routeEscalation());
             line = switch (graph.routeOutcome()) {
                 // The four outcomes need different advice. Saying "no route" when the truth is
@@ -922,7 +1089,14 @@ public class ProcessGraphScreen extends Screen {
         int x = node.x;
         int y = node.y;
         int background = switch (node.kind) {
-            case MACHINE -> PROCESS_BG;
+            case MACHINE -> {
+                int base = graph.isPlan() ? PLAN_BG : PROCESS_BG;
+                // One of a block of interchangeable machines, and not the one whose subtree is
+                // drawn: dimmer, so the block reads as "any of these" at a glance rather than as
+                // several separate steps.
+                yield node.equivalent || (graph.isPlan() && node.process.isAlternative())
+                        ? (graph.isPlan() ? PLAN_ALT_BG : PROCESS_ALT_BG) : base;
+            }
             case CLUSTER -> CLUSTER_BG;
             case ITEM -> node.isFocus ? FOCUS_BG
                     : node.isParent ? PARENT_BG
@@ -969,7 +1143,16 @@ public class ProcessGraphScreen extends Screen {
         int room = w - 23;
         String suffix = null;
         if (node.kind == Kind.MACHINE) {
-            suffix = String.valueOf(node.process.recipeCount());
+            if (!graph.isPlan()) {
+                suffix = String.valueOf(node.process.recipeCount());
+            } else if (node.process.isAlternative()) {
+                // Not a count: this node stands for a choice, not for a pile of recipes.
+                suffix = "or";
+            } else if (node.process.items().size() > 1) {
+                // The whole point. In a walk these children are alternatives; here every one of
+                // them is required, and the picture alone cannot say which.
+                suffix = "all " + node.process.items().size();
+            }
         } else if (!node.isFocus && !node.isParent && node.item.canExpand()) {
             suffix = "+";
         }
@@ -981,7 +1164,7 @@ public class ProcessGraphScreen extends Screen {
         if (suffix != null) {
             room -= font.width(suffix) + 4;
             graphics.drawString(font, suffix, x + w - 3 - font.width(suffix), y + 6,
-                    node.kind == Kind.MACHINE ? 0xFFB0C4DE
+                    node.kind == Kind.MACHINE ? (graph.isPlan() ? 0xFFD0B0E0 : 0xFFB0C4DE)
                             : node.copies > 1 ? BORDER_SHARED : 0xFF909090, false);
         }
         graphics.drawString(font, font.plainSubstrByWidth(label, room), x + 21, y + 6,
@@ -1020,7 +1203,23 @@ public class ProcessGraphScreen extends Screen {
         graphics.hLine(0, width, CHROME_H, CHROME_LINE);
 
         StringBuilder status = new StringBuilder();
-        if (graph.isRoute()) {
+        if (graph.isPlan()) {
+            ProcessGraph.PlanSummary summary = graph.planSummary();
+            status.append("plan: ").append(stackName(graph.routeTo()));
+            if (summary != null) {
+                status.append(", ").append(summary.machines().size())
+                        .append(summary.machines().size() == 1 ? " machine" : " machines")
+                        .append(", ").append(summary.raw().size()).append(" materials");
+            }
+            if (graph.planOutcome() != PlanSearch.Outcome.RESOLVED) {
+                status.append(", ").append(switch (graph.planOutcome()) {
+                    case DEPTH_LIMIT -> "deeper than " + ProcessSearchConfig.planMaxDepth() + " tiers";
+                    case BUDGET_EXHAUSTED -> "search too wide";
+                    case TIME_LIMIT -> "took too long";
+                    default -> "incomplete";
+                });
+            }
+        } else if (graph.isRoute()) {
             status.append("route: ").append(stackName(graph.routeFrom()))
                     .append(" → ").append(stackName(graph.routeTo()));
             if (graph.routeOutcome() == RouteSearch.Outcome.FOUND) {
@@ -1087,9 +1286,13 @@ public class ProcessGraphScreen extends Screen {
 
         if (path.size() == 1 && placed.size() > 1) {
             // The only affordance otherwise is a small "+", which is not enough of a hint.
-            String hint = graph.isRoute()
-                    ? "click a machine for its recipes · right-click an item to explore from it"
-                    : "click an item to follow it · click a machine for its recipes";
+            String hint = switch (graph.mode()) {
+                // A plan's nodes arrive already walked, so "follow" would promise nothing. What
+                // there is to do is read the summary, or leave the plan and explore.
+                case PLAN -> "press Plan for the build list · right-click an item to explore from it";
+                case ROUTE -> "click a machine for its recipes · right-click an item to explore from it";
+                case WALK -> "click an item to follow it · click a machine for its recipes";
+            };
             int hintWidth = font.width(hint);
             if (x + 16 + hintWidth < width - 4) {
                 graphics.drawString(font, hint, width - hintWidth - 6, y, 0xFF5E5E5E, false);
@@ -1107,9 +1310,29 @@ public class ProcessGraphScreen extends Screen {
             }
             case MACHINE -> {
                 lines.add(line(node.process.category.getName()));
-                lines.add(line(Component.literal(node.process.recipeCount() + " recipes "
-                        + graph.direction.verb() + " " + name(node.process.parent))
-                        .withStyle(ChatFormatting.GRAY)));
+                if (node.equivalent) {
+                    lines.add(line(Component.literal("Does the same as the machine beside it "
+                            + "— use either").withStyle(ChatFormatting.GRAY)));
+                }
+                if (graph.isPlan() && node.process.isAlternative()) {
+                    lines.add(line(Component.literal("Does the same step as "
+                            + node.process.equivalent().getName().getString()
+                            + " \u2014 use either").withStyle(ChatFormatting.GRAY)));
+                } else if (graph.isPlan()) {
+                    int needed = node.process.items().size();
+                    lines.add(line(Component.literal(needed == 1
+                            ? "Needs the item above" : "Needs all " + needed + " items above")
+                            .withStyle(ChatFormatting.GOLD)));
+                    if (node.process.equivalent() != null) {
+                        lines.add(line(Component.literal("Or use "
+                                + node.process.equivalent().getName().getString())
+                                .withStyle(ChatFormatting.GRAY)));
+                    }
+                } else {
+                    lines.add(line(Component.literal(node.process.recipeCount() + " recipes "
+                            + graph.direction.verb() + " " + name(node.process.parent))
+                            .withStyle(ChatFormatting.GRAY)));
+                }
                 lines.add(line(Component.literal("Click to list the recipes")
                         .withStyle(ChatFormatting.DARK_GRAY)));
             }
@@ -1131,6 +1354,10 @@ public class ProcessGraphScreen extends Screen {
                 } else {
                     lines.add(line(Component.literal("Click to follow, right-click to re-root")
                             .withStyle(ChatFormatting.DARK_GRAY)));
+                }
+                if (graph.isPlan() && node.item.isUnresolved()) {
+                    lines.add(line(Component.literal("The plan stopped here without working out "
+                            + "how to make this").withStyle(ChatFormatting.GOLD)));
                 }
                 if (node.copies > 1) {
                     lines.add(line(Component.literal("Drawn in " + node.copies
@@ -1291,20 +1518,22 @@ public class ProcessGraphScreen extends Screen {
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        // Named rather than numbered, the way HotKey does it. These four are the only keys the
+        // graph claims, and the README's gesture table is where a player finds them.
         switch (keyCode) {
-            case 256 -> {
+            case GLFW.GLFW_KEY_ESCAPE -> {
                 onClose();
                 return true;
             }
-            case 259 -> {
+            case GLFW.GLFW_KEY_BACKSPACE -> {
                 goBack();
                 return true;
             }
-            case 70 -> {
+            case GLFW.GLFW_KEY_F -> {
                 frameView();
                 return true;
             }
-            case 268 -> {
+            case GLFW.GLFW_KEY_HOME -> {
                 focusIndex(0);
                 return true;
             }

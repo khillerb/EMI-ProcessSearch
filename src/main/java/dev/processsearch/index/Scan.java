@@ -118,6 +118,32 @@ public final class Scan {
         }
     }
 
+    /**
+     * The first stack of an ingredient that the index can actually name.
+     *
+     * <p>A hovered slot may hold a tag, and a tag flattens to anything from one stack to two
+     * hundred. Everything that starts from "what is the cursor on" needs one representative, and
+     * needs it chosen the same way, or the tree and the plan would disagree about what you pointed
+     * at.
+     *
+     * @return null when nothing in the ingredient is an item or a fluid
+     */
+    public static EmiStack firstKeyable(EmiIngredient ingredient) {
+        if (ingredient == null) {
+            return null;
+        }
+        try {
+            for (EmiStack stack : ingredient.getEmiStacks()) {
+                if (key(stack) != null) {
+                    return stack;
+                }
+            }
+        } catch (RuntimeException | LinkageError e) {
+            return null;
+        }
+        return null;
+    }
+
     /** @return the registry singleton to key on, or null if this is not an item or fluid. */
     public static Object key(EmiStack stack) {
         if (stack == null || stack.isEmpty()) {

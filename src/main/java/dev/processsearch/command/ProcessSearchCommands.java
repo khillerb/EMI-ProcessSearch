@@ -71,6 +71,11 @@ public final class ProcessSearchCommands {
                             .withStyle(ChatFormatting.AQUA))
                     .append(Component.literal("  route: press on what you have, then on what you want")
                             .withStyle(ChatFormatting.GRAY)));
+            send(source, Component.literal("  ")
+                    .append(Component.literal(ProcessSearchConfig.treePlanKey().describe())
+                            .withStyle(ChatFormatting.AQUA))
+                    .append(Component.literal("  build plan: everything needed to make it")
+                            .withStyle(ChatFormatting.GRAY)));
             if (KeyHook.hasFired()) {
                 send(source, Component.literal("  key hook: installed").withStyle(ChatFormatting.GREEN));
             } else {

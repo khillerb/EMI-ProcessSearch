@@ -55,7 +55,7 @@ public final class ProcessGraphBuilder {
     private final int maxItems = ProcessSearchConfig.treeMaxItemsPerProcess();
     private final int maxNodes = ProcessSearchConfig.treeMaxNodes();
 
-    private final Map<EmiRecipeCategory, EmiIngredient> icons = new HashMap<>();
+    private final Workstations icons;
 
     /** False when the query needed the item index and it was not built; the screen says so. */
     private boolean filtersUsable = true;
@@ -68,6 +68,7 @@ public final class ProcessGraphBuilder {
         this.clauses = clauses;
         this.exclusionQuery = exclusionQuery;
         this.retentionQuery = retentionQuery;
+        this.icons = new Workstations(manager);
     }
 
     /** @return the graph, or null when EMI has no recipe manager or the stack is not keyable */
@@ -262,7 +263,7 @@ public final class ProcessGraphBuilder {
                 break;
             }
             Map.Entry<EmiRecipeCategory, List<EmiRecipe>> entry = ordered.get(i);
-            ProcessNode process = new ProcessNode(entry.getKey(), iconFor(entry.getKey()),
+            ProcessNode process = new ProcessNode(entry.getKey(), icons.iconFor(entry.getKey()),
                     List.copyOf(entry.getValue()), node);
             graph.countProcess();
             addFarSide(graph, process, node, discovered);
@@ -405,24 +406,6 @@ public final class ProcessGraphBuilder {
         } catch (RuntimeException | LinkageError e) {
             return Set.of();
         }
-    }
-
-    private EmiIngredient iconFor(EmiRecipeCategory category) {
-        return icons.computeIfAbsent(category, c -> {
-            try {
-                List<EmiIngredient> workstations = manager.getWorkstations(c);
-                if (workstations != null) {
-                    for (EmiIngredient workstation : workstations) {
-                        if (workstation != null && !workstation.isEmpty()) {
-                            return workstation;
-                        }
-                    }
-                }
-            } catch (RuntimeException | LinkageError e) {
-                // Fall through; the screen draws the category's own icon instead.
-            }
-            return EmiStack.EMPTY;
-        });
     }
 
     private boolean isExcluded(EmiStack stack) {

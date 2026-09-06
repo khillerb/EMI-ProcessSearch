@@ -41,7 +41,7 @@ public final class ProcessTreeNavigation {
         if (!ProcessSearchConfig.processTree() || hovered == null || hovered.isEmpty()) {
             return false;
         }
-        EmiStack stack = firstStack(hovered);
+        EmiStack stack = Scan.firstKeyable(hovered);
         if (stack == null) {
             return false;
         }
@@ -51,12 +51,12 @@ public final class ProcessTreeNavigation {
     }
 
     /**
-     * Shows a route, keeping whatever was open on the back stack.
+     * Shows a found answer -- a route or a plan -- keeping whatever was open on the back stack.
      *
-     * <p>A route is an ordinary graph as far as everything downstream is concerned, so Back, the
+     * <p>Either is an ordinary graph as far as everything downstream is concerned, so Back, the
      * history stack and the recipe drill-down all work without knowing the difference.
      */
-    public static boolean showRoute(ProcessGraph graph) {
+    public static boolean show(ProcessGraph graph) {
         if (graph == null) {
             return false;
         }
@@ -77,12 +77,14 @@ public final class ProcessTreeNavigation {
      *
      * @return true when a new attempt was made
      */
-    public static boolean deepenRoute() {
-        if (current == null || !current.isRoute()) {
+    public static boolean deepen() {
+        if (current == null || !current.isFixed()) {
             return false;
         }
-        ProcessGraph deeper = RouteBuilder.route(current.routeFrom(), current.routeTo(),
-                current.routeEscalation() + 1);
+        int next = current.routeEscalation() + 1;
+        ProcessGraph deeper = current.isPlan()
+                ? PlanBuilder.plan(current.routeTo(), next)
+                : RouteBuilder.route(current.routeFrom(), current.routeTo(), next);
         if (deeper == null) {
             return false;
         }
@@ -212,16 +214,4 @@ public final class ProcessTreeNavigation {
         }
     }
 
-    private static EmiStack firstStack(EmiIngredient ingredient) {
-        try {
-            for (EmiStack stack : ingredient.getEmiStacks()) {
-                if (Scan.key(stack) != null) {
-                    return stack;
-                }
-            }
-        } catch (RuntimeException | LinkageError e) {
-            return null;
-        }
-        return null;
-    }
 }

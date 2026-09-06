@@ -1,5 +1,2 @@
 {
-  "processsearch.command.stats.header": "Process Search",
-  "processsearch.command.stats.notbuilt": "Index not built yet. Open EMI, or run /processsearch rebuild.",
-  "processsearch.command.rebuild": "Process Search index cleared; it will rebuild on the next EMI open or search."
 }

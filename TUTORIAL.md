@@ -8,7 +8,7 @@ Everything here is typed into **EMI's normal search box**. There is no second UI
 
 ## Install
 
-Drop `processsearch-0.3.0.jar` into `mods/`. Client-side only — servers neither need it nor care.
+Drop `processsearch-0.4.0.jar` into `mods/`. Client-side only — servers neither need it nor care.
 
 Then join a world and **open EMI once**. The index builds quietly at 3 ms per tick from that moment.
 You do not have to wait for it — search early and the results fill in a beat later.
@@ -48,6 +48,17 @@ Read the prefixes as questions:
 ```
 
 Everything after `>` or `<` is `process` or `process/property`. That is the whole grammar.
+
+That is the search half. There is a graph half too, on four keys over a hovered item:
+
+| Press this | Get this |
+|---|---|
+| `<` | the **tree**: what this can be turned into |
+| `>` | the **tree**: everything that makes it |
+| `shift+R` | a **route**: press on what you have, then on what you want |
+| `shift+P` | a **plan**: everything needed to make it, down to the ore |
+
+Lessons 7 to 9 cover those. Nothing in the graph needs the search box, but it listens to it.
 
 ---
 
@@ -276,6 +287,22 @@ depth is unlimited: you pay for where you stand, not for everything you might re
 | Filters | pick which machines to follow |
 | Esc | back to the game |
 
+The same screen draws routes and plans, so these all work there too — except Filters, which only a
+tree has, and the direction button, which only a tree shows.
+
+### Machines that do the same job
+
+Grinding an ore is offered three or four ways in a big pack — a Macerator, a set of Crushing Wheels,
+somebody's Pulveriser. Drawn as separate boxes that reads as several decisions when it is one.
+
+Machines that take the same things in and give the same thing out are drawn as **one block**, three
+across and three down, biggest machine first — where "biggest" means how many recipes that machine's
+category holds, because a category with a thousand recipes is how the pack generally does this and a
+two-recipe category is usually a one-off. Past nine, the rest become a `+N` chip that opens the list.
+
+Only the first box in a block has anything hanging below it. The others lead to exactly the same
+items by definition, so drawing their branches would be the same picture three times.
+
 ### Zooming out
 
 Past 55% the tree switches to **compact**: labels go, icons grow, and the boxes shrink to squares so
@@ -336,16 +363,112 @@ untick them.
 Two different caps, and they fail differently.
 
 **What is drawn**: seven rows (`treeViewLayers`) — focus, then machines and items three times over.
-Twelve machines around the focus and six items under each (six is exactly a 3 × 2 block); layers past
-that fan out by two and share `treeVisiblePerLayer` (72). Past those you get a `+N` chip, and the
+Twelve machine *blocks* around the focus (`treeVisibleMachines` counts blocks, not boxes, so four
+interchangeable grinders cost one) and six items under each; layers past that fan out by two and
+share `treeVisiblePerLayer` (72). Past those you get a `+N` chip, and the
 chip opens.
 
 **What is walked**: 32 machines per item, 32 items per machine, 6000 nodes for the session. Raise
 `treeMaxProcessesPerItem` / `treeMaxItemsPerProcess` if a `+N` chip is hiding something real — the
 sliders for all of these are in **Mods → Process Search → config**, and they take effect on close.
 
-An item already on the graph shows `↺` instead of branching again, which is what stops cobblestone →
-stone → cobblestone looping.
+An item the walk has already met links back to the node it made rather than branching again, which
+is what stops cobblestone → stone → cobblestone running forever.
+
+When that item ends up **drawn in more than one place**, every copy is outlined in amber and marked
+`×2`, and hovering one lights up the others. That is worth looking for: an intermediate several
+branches arrive at is the one worth automating first.
+
+---
+
+## Lesson 8 — routes: how do I get from A to B?
+
+The tree walks outward one step at a time. When you already know both ends, ask for the path.
+
+Hover something you have — copper, say — and press **shift+R**. A message confirms the anchor. Now go
+and find what you want, hover it, and press **shift+R** again.
+
+```
+shift+R on copper       overlay: "Route from Copper Ingot — now press shift+r on what you want"
+shift+R on the target   the route opens
+```
+
+Pressing it twice on the same item cancels.
+
+What opens is the same graph screen, reading top to bottom: what you have, each machine in turn, what
+you wanted. It searches from **both ends at once**, which is why it can afford to look eight steps
+deep in a pack this size — two searches of four beat one of eight by a very long way.
+
+Routes are shortest-by-step-count, which reads as *fewest machines*. The mod is client-side and
+cannot know what you have unlocked, so it will not pretend to rank by difficulty.
+
+### The Filters list means something different here
+
+For the tree, Filters is a gate: nothing is followed until you tick it. For a route it is a
+**preference** — equally short routes go to the machines you ticked, but a route may use anything.
+
+That is deliberate. A tree fans out exponentially and needs an allowlist to stay finite; a route is a
+targeted question already bounded by its budget, and defaulting a fresh install to "no machines" would
+mean it never found anything. Set `routeRespectCategoryFilter` to make it a hard constraint — *"route
+using only what I have actually built"* — which is the version you want once a pack is underway.
+
+### When it does not find one
+
+Four things can stop it, and they need different answers, so it says which:
+
+| It says | It means |
+|---|---|
+| *no path* | nothing connects them |
+| *too far* | a route exists but is longer than `routeMaxSteps` |
+| *search too wide* | it ran out of nodes |
+| *took too long* | it ran out of clock |
+
+The last three put a **Deeper** button on the screen. Press it and the search runs again with all
+three budgets raised; press it until it tells you it has hit the ceiling. Nobody should have to go
+and edit a config file to answer a question they just asked.
+
+---
+
+## Lesson 9 — plans: what do I need to make this?
+
+A route is one thread. It reads *copper, then mixing, then pressing* — but the mixing step also wants
+zinc, and the pressing step wants a press you have not built.
+
+Hover anything and press **shift+P**.
+
+You get the whole thing: every prerequisite, resolved down to what nothing makes — ores, mob drops,
+worldgen — plus the machines to build and materials to gather.
+
+Plans stop at raw resources and never at your inventory. That is on purpose: a plan that also stopped
+at whatever you happened to be carrying would change every time you picked something up, and a plan
+you cannot work from twice is not a plan.
+
+### The one thing to get right: all, not any
+
+On the tree, the items under a machine are **alternatives** — any of these will do.
+
+In a plan they are **requirements** — you need all of them.
+
+Same picture, opposite meaning, so a plan says so: its machines are a different colour, labelled
+`all 3`, and their tooltip spells out how many of the items above are needed.
+
+Machines under an *item* still read as alternatives, because that part has not changed. An item is a
+choice between the recipes that make it; a recipe is a demand for all of its inputs.
+
+### Press Plan
+
+The tree is the reasoning. The **Plan** button is the answer: the distinct machines to build, the raw
+materials to gather, and anything it could not work out. That is the list you would actually work
+from, and clicking a material plans *it* in turn.
+
+Watch for `×2` marks. An item needed in several branches is the one to automate first — that is the
+single most useful thing on the screen.
+
+### When it stops short
+
+Unlike a route, a plan usually fails *partly* — most of the tree resolved and one branch did not — so
+it shows what it got and marks where it stopped rather than throwing the lot away. It has the same
+**Deeper** button, and the same ceiling.
 
 ---
 
@@ -410,6 +533,21 @@ $c:ingots >mixing/heat.heated
 >heat.superheated
 ```
 
+**"I have copper. How do I get to a Precision Mechanism?"**
+
+Hover copper, `shift+R`. Hover the mechanism, `shift+R`.
+
+**"What do I actually need to build before I can make one?"**
+
+Hover it, `shift+P`, then press **Plan**. The machine list is what you build; the materials list is
+what you go and mine.
+
+**"Which mods in this pack have no facets worth searching?"**
+
+```
+/processsearch gaps
+```
+
 ---
 
 ## Gotchas
@@ -427,9 +565,14 @@ Use the full compound token when you want precision.
 own thread, so the build cannot block it; the query flags itself, the build starts, and the search
 re-runs on its own when it finishes.
 
-**Only Create and Modern Industrialization have deep facets.** Every other mod still gets category,
-machine-name, title, `fluid.*` and `chance.*` tokens — so `>alloy_forgery`, `>assembler`,
-`>compressor` all work — they just do not have mod-specific properties like `heat.*`.
+**Only Create and Modern Industrialization have hand-written facets.** Every other mod still gets
+category, machine-name, title, `fluid.*` and `chance.*` tokens — so `>alloy_forgery`, `>assembler`,
+`>compressor` all work — they just have no mod-specific properties like `heat.*` out of the box.
+
+You can add them without touching code: drop a JSON file in `config/processsearch/facet_rules/` and
+run `/processsearch rebuild`. `/processsearch gaps` ranks the categories that earned nothing but
+their own name, biggest first, which is the list worth writing rules for. The README has the field
+reference.
 
 ---
 
@@ -483,6 +626,27 @@ The query used `~` or a facet prefix, which only the process index can answer, a
 yet. The tree deliberately refuses to half-apply a filter there — with no index a negated `~` term
 would silently admit everything. Open EMI for a moment, then reopen the tree.
 
+**A route or plan hotkey does nothing.**
+Same check as `<` and `>`: `/processsearch stats` prints all four keys and whether the key hook has
+fired. `shift+R` and `shift+P` are `treeRouteKey` and `treePlanKey` in the config.
+
+**A plan bottoms out somewhere odd, or picks a strange recipe.**
+It takes the first recipe that fully resolves, and the order is: machines you ticked in Filters
+first, then the busiest category, then fewest ingredients. Ticking the machines you actually use is
+the lever. A branch it could not work out is listed under *Could not work out* in the Plan panel
+rather than hidden.
+
+**Something that used to work stopped after an EMI update.**
+
+```
+/processsearch compat
+```
+
+This mod hooks EMI internals, not published API, and the mixins fail soft so an EMI update cannot
+brick your world — the cost being that a moved target is silent. `compat` checks every one of them
+and prints `ok`, `unproven` or `missing`. *Unproven* usually just means you have not used that
+feature yet this session; use it and re-run. *Missing* names what broke and what stopped working.
+
 **Start over:** `/processsearch rebuild` — also reloads the config file.
 
 ---
@@ -494,8 +658,15 @@ would silently admit everything. Open EMI for a moment, then reopen the tree.
 Built for and tested against **Prominence II: Hasturian Era v4.0.2** (445 mods, EMI 1.1.24, Create
 fabric 6.0.8.1, Modern Industrialization 1.8.6).
 
-Any 1.20.1 Fabric pack with EMI should work. Without Create or MI you lose `heat.*`, `eu.*` and
-`speed.*`, but categories, machine names, item classes, `fluid.*` and `chance.*` all still function —
-which is still the core "what makes this" capability.
+Any 1.20.1 Fabric pack with EMI should work. Without Create or MI you lose the hand-written
+`heat.*`, `eu.*` and `speed.*` facets, but categories, machine names, item classes, `fluid.*` and
+`chance.*` all still function — and the tree, routes and plans do not depend on any of them, because
+they read EMI's recipe graph directly.
+
+For anything else you want searchable, write a facet rule: `config/processsearch/facet_rules/`, no
+code and no rebuild of the mod. `/processsearch gaps` tells you where it would be worth doing.
+
+EMI is pinned to `1.1.x`. A 1.2 would refuse to load the mod rather than half-working, which is the
+safer failure for something that reaches this far into EMI's internals.
 
 For **Minecraft 1.21.1 / NeoForge / JEI**, use the sibling project in `JEI-ProcessSearch` instead.

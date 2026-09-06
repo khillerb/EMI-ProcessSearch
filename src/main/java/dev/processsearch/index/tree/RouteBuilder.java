@@ -1,6 +1,5 @@
 package dev.processsearch.index.tree;
 
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -10,7 +9,6 @@ import dev.emi.emi.api.EmiApi;
 import dev.emi.emi.api.recipe.EmiRecipe;
 import dev.emi.emi.api.recipe.EmiRecipeCategory;
 import dev.emi.emi.api.recipe.EmiRecipeManager;
-import dev.emi.emi.api.stack.EmiIngredient;
 import dev.emi.emi.api.stack.EmiStack;
 import dev.processsearch.ProcessSearch;
 import dev.processsearch.ProcessSearchConfig;
@@ -32,33 +30,9 @@ import dev.processsearch.index.Scan;
 public final class RouteBuilder {
     private RouteBuilder() {}
 
-    /**
-     * How far a retry has escalated past the configured budgets.
-     *
-     * <p>Each press of Deeper adds four steps and doubles the node and time budgets, stopping at
-     * the ceilings in {@link ProcessSearchConfig}. Retrying is what makes a step cap survivable;
-     * the ceiling is what stops the retry becoming a hang with extra clicks.
-     */
-    private static int steps(int escalation) {
-        return Math.min(ProcessSearchConfig.MAX_ROUTE_STEPS,
-                ProcessSearchConfig.routeMaxSteps() + escalation * 4);
-    }
-
-    private static int nodes(int escalation) {
-        long scaled = (long) ProcessSearchConfig.routeMaxNodes() << Math.min(escalation, 16);
-        return (int) Math.min(ProcessSearchConfig.MAX_ROUTE_NODES, scaled);
-    }
-
-    private static long nanos(int escalation) {
-        long scaled = (long) ProcessSearchConfig.routeMaxMillis() << Math.min(escalation, 16);
-        return Math.min(ProcessSearchConfig.MAX_ROUTE_MILLIS, scaled) * 1_000_000L;
-    }
-
-    /** True while a further retry would actually raise something. */
+    /** True while a further press of Deeper would actually raise something. */
     public static boolean canDeepen(int escalation) {
-        return steps(escalation) < ProcessSearchConfig.MAX_ROUTE_STEPS
-                || nodes(escalation) < ProcessSearchConfig.MAX_ROUTE_NODES
-                || nanos(escalation) < ProcessSearchConfig.MAX_ROUTE_MILLIS * 1_000_000L;
+        return Budgets.route(escalation).canRaise();
     }
 
     /**
@@ -88,9 +62,10 @@ public final class RouteBuilder {
             return null;
         }
 
+        Budgets budgets = Budgets.route(escalation);
         long start = System.nanoTime();
         RouteSearch.Route route = RouteSearch.find(from, to, neighbours,
-                steps(escalation), nodes(escalation), nanos(escalation));
+                budgets.limit(), budgets.nodes(), budgets.nanos());
         ProcessSearch.LOGGER.debug("Route search {} in {} ms (escalation {})", route.outcome(),
                 (System.nanoTime() - start) / 1_000_000L, escalation);
 
@@ -109,7 +84,7 @@ public final class RouteBuilder {
         // redraw the machine the route already put there.
         graph.setBuilder(ProcessGraphBuilder.forDirection(manager, Direction.CONSUMERS));
 
-        Map<EmiRecipeCategory, EmiIngredient> icons = new HashMap<>();
+        Workstations icons = new Workstations(manager);
         Set<Object> placed = new HashSet<>();
         placed.add(route.source());
         int depth = 0;
@@ -135,13 +110,38 @@ public final class RouteBuilder {
             }
 
             ProcessNode process = new ProcessNode(category,
-                    icons.computeIfAbsent(category, c -> iconFor(manager, c)),
+                    icons.iconFor(category),
                     List.of(recipe), current);
+            process.group = process;
             graph.countProcess();
 
             ItemNode next = graph.nodeFor(leg.key(), stack, ++depth);
             process.add(next);
             current.add(process);
+
+            // Every other machine that would do this same step, drawn beside it as a block. A
+            // route picks one recipe because it has to pick something, and without this the choice
+            // it made silently looks like the only one there was.
+            for (EmiRecipe alternative : neighbours.equivalentsFor(recipe, leg.key())) {
+                EmiRecipeCategory other = category(alternative);
+                if (other == null) {
+                    continue;
+                }
+                ProcessNode swap = new ProcessNode(other,
+                        icons.iconFor(other),
+                        List.of(alternative), current);
+                swap.alternative = true;
+                swap.equivalent = category;
+                // Same group as the step it stands in for, so the screen lays them out together
+                // rather than working it out from what they lead to -- these carry no items of
+                // their own, deliberately, since that would be the same subtree again.
+                swap.group = process;
+                graph.countProcess();
+                current.add(swap);
+                if (process.equivalent == null) {
+                    process.equivalent = other;
+                }
+            }
             current = next;
             last = next;
         }
@@ -159,23 +159,6 @@ public final class RouteBuilder {
         } catch (RuntimeException | LinkageError e) {
             return null;
         }
-    }
-
-    /** The workstation, so a step reads "Crushing Wheels" rather than "create:crushing". */
-    private static EmiIngredient iconFor(EmiRecipeManager manager, EmiRecipeCategory category) {
-        try {
-            List<EmiIngredient> workstations = manager.getWorkstations(category);
-            if (workstations != null) {
-                for (EmiIngredient workstation : workstations) {
-                    if (workstation != null && !workstation.isEmpty()) {
-                        return workstation;
-                    }
-                }
-            }
-        } catch (RuntimeException | LinkageError e) {
-            // Fall through; the screen draws the category's own icon instead.
-        }
-        return EmiStack.EMPTY;
     }
 
     /** Whether two stacks name the same thing, so routing to yourself can be refused. */

@@ -47,7 +47,7 @@ public final class RouteAnchor {
         if (!ProcessSearchConfig.processTree() || hovered == null || hovered.isEmpty()) {
             return false;
         }
-        EmiStack stack = firstStack(hovered);
+        EmiStack stack = Scan.firstKeyable(hovered);
         if (stack == null) {
             return false;
         }
@@ -87,7 +87,7 @@ public final class RouteAnchor {
         }
         // Shown whether or not a path was found: a failed search still gets a screen, because that
         // is where the Deeper button lives.
-        return ProcessTreeNavigation.showRoute(graph);
+        return ProcessTreeNavigation.show(graph);
     }
 
     private static Component name(EmiStack stack) {
@@ -105,16 +105,4 @@ public final class RouteAnchor {
         }
     }
 
-    private static EmiStack firstStack(EmiIngredient ingredient) {
-        try {
-            for (EmiStack stack : ingredient.getEmiStacks()) {
-                if (Scan.key(stack) != null) {
-                    return stack;
-                }
-            }
-        } catch (RuntimeException | LinkageError e) {
-            return null;
-        }
-        return null;
-    }
 }

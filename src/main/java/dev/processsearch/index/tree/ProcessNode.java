@@ -28,6 +28,28 @@ public final class ProcessNode {
     /** Items the width cap dropped. */
     int hiddenItems;
 
+    /**
+     * Another machine that does exactly this step, when one exists.
+     *
+     * <p>Plenty of packs ship two ways to grind an ore -- a Macerator and a set of Crushing Wheels
+     * take the same thing in and give the same thing out. Picking one silently would hide a real
+     * choice, so the plan names the runner-up.
+     */
+    EmiRecipeCategory equivalent;
+
+    /** True when this node exists only to name an alternative, and has no inputs of its own. */
+    boolean alternative;
+
+    /**
+     * Shared by machines that do the same job, so the screen can draw them as one block.
+     *
+     * <p>Set by a builder that already knows -- a plan picks one recipe and knows the runner-up it
+     * passed over. Left null by the walk, where the screen works it out instead: two machines are
+     * interchangeable when they lead to exactly the same items, which is true from that item's
+     * point of view whichever direction the graph runs.
+     */
+    Object group;
+
     ProcessNode(EmiRecipeCategory category, EmiIngredient icon, List<EmiRecipe> recipes,
                 ItemNode parent) {
         this.category = category;
@@ -52,6 +74,21 @@ public final class ProcessNode {
 
     public int recipeCount() {
         return recipes.size();
+    }
+
+    /** The other machine that does this same step, or null. */
+    public EmiRecipeCategory equivalent() {
+        return equivalent;
+    }
+
+    /** True when this node is the runner-up machine rather than the one the plan chose. */
+    public boolean isAlternative() {
+        return alternative;
+    }
+
+    /** What this machine is interchangeable with, or null when the screen should work it out. */
+    public Object group() {
+        return group;
     }
 
     @Override

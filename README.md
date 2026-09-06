@@ -9,6 +9,18 @@ out automation, and the answer is buried under thousands of near-identical recip
 This is a port of the NeoForge/JEI version that lives next door in `JEI-ProcessSearch`. The ideas
 are the same; almost none of the code is, because the recipe viewer underneath is different.
 
+It answers four questions, each richer than the last:
+
+| | | |
+|---|---|---|
+| **Search** | type `>mixing` | every item a mixer makes, as a filter on EMI's own grid |
+| **Tree** | hover an item, `<` or `>` | the chain outward from it, a step at a time |
+| **Route** | `shift+R`, then `shift+R` | a path from what you have to what you want |
+| **Plan** | `shift+P` | everything needed to make it, down to the ore |
+
+The first is typed into EMI's search box. The other three are one graph screen answering
+progressively bigger questions, and the sections below are in that order.
+
 ## The grammar
 
 Four prefixes, one distinct question each. Everything after a prefix has one shape.
@@ -64,6 +76,32 @@ Bare forms still work, because matching is by substring:
 `>"two words"` does **not** work. EMI's tokenizer only honours quotes at the very start of a token,
 so `>"mechanical press"` is read as two tokens. This costs nothing in practice: facet tokens are
 sanitised to underscores, so the real token is always `mechanical_press`.
+
+## Every gesture
+
+Four keys over a hovered item, and four inside the graph. This table is the only place they
+are written down, so it is the one to check.
+
+| Over an item in EMI | |
+|---|---|
+| `<` (shift+comma) | process tree: what this becomes |
+| `>` (shift+period) | process tree: everything that makes it |
+| `shift+R` | route: press on what you have, then on what you want |
+| `shift+P` | build plan: everything needed to make it |
+
+| Inside the graph | |
+|---|---|
+| `F` | fit the view |
+| `Home` | back to the root |
+| `Backspace` | back one step |
+| `Esc` | close, back to your inventory |
+| left-click an item | follow it (walk), or focus that branch |
+| right-click an item | start a fresh walk from it |
+| left-click a machine | list its recipes |
+| drag / scroll | pan and zoom |
+
+Every key is configurable; the four hotkeys are named `treeConsumersKey`,
+`treeProducersKey`, `treeRouteKey` and `treePlanKey` in the config.
 
 ## Facet vocabulary
 
@@ -124,163 +162,7 @@ the other kind: it comes from a recipe, and hangs on whatever that recipe produc
 
 **From a rule file, any mod**
 
-Anything else, without a line of code — see below.
-
-## Writing facet rules
-
-The two hand-written sources above exist because Create's heat condition and MI's EU cost are
-*fields*, and reading a field means compiling against the mod. That is a fine trade for two mods
-and a bad one for four hundred: each new one would cost a vendored jar, a build change, a
-mod-loaded gate and a config toggle — and a *pack* could never add a facet at all, only a mod
-release could.
-
-So everything else is data. Drop a `.json` file in `config/processsearch/facet_rules/` and it is
-picked up on the next `/processsearch rebuild`. No compile dependency, no jar, no restart.
-
-```json
-{
-  "rules": [
-    {
-      "id": "techreborn_powered",
-      "categoryNamespace": "techreborn",
-      "tokens": ["powered"]
-    },
-    {
-      "id": "big_smelt",
-      "recipeClass": "net.minecraft.world.item.crafting.AbstractCookingRecipe",
-      "inputCount": { "min": 2 },
-      "tokens": ["bulk_cooking"]
-    },
-    {
-      "id": "fan_dye",
-      "categoryId": ["create_dragons_plus:fan_coloring"],
-      "recipeIdPattern": "_dye$",
-      "tokens": ["dye"],
-      "itemClasses": ["dye"]
-    }
-  ]
-}
-```
-
-Every condition is optional and they are **ANDed**; within one condition a list is an OR. A rule
-with no condition at all is refused, because it would tag every recipe in the pack.
-
-| Field | Shape | Matches |
-|---|---|---|
-| `categoryId` | string or list | the full `namespace:path`, exactly |
-| `categoryNamespace` | string or list | every category of that mod |
-| `recipeIdPattern` | regex | searched against the recipe id, not anchored |
-| `recipeClass` | fully-qualified name | the backing recipe's type |
-| `matchSubclasses` | bool, default `true` | walks superclasses *and* interfaces |
-| `requiresFluidInput` / `requiresFluidOutput` | bool | `true` demands a fluid, `false` forbids one |
-| `inputCount` / `outputCount` | `2` or `{"min":1,"max":3}` | ingredient **slots**, so a tag counts once |
-
-and emits:
-
-| Field | Effect |
-|---|---|
-| `tokens` | facet tokens, reachable through `>`, `<` and `*` |
-| `itemClasses` | `~` classes hung on the recipe's **outputs** |
-
-Tokens go through the same sanitiser as every other facet, so `"Heated Mixing"` becomes
-`heated_mixing` and stays typeable — EMI splits its search box on whitespace and `|`.
-
-### Why matching on the class is the useful part
-
-`recipeClass` walks the whole type hierarchy by **name**. One rule naming Create's
-`ProcessingRecipe` therefore reaches mixing, crushing, milling, pressing, every fan process, and
-every Create addon built on the same base — the same reach `instanceof` gives `CreateFacets`,
-without the class ever being on our classpath.
-
-Nothing here reads a field or calls a method on a recipe. That is the deliberate limit: a rule
-cannot ask what a recipe's EU cost *is*, only what kind of thing it is. In exchange, a rule written
-for a mod you do not have installed cannot throw — the worst it can do is fail to match.
-
-### Precedence
-
-Bundled defaults load first, then `config/processsearch/facet_rules/` in filename order. A rule
-reusing an earlier rule's `id` replaces it outright, which is how you override a bundled default
-rather than fighting it. Copy the file out of the jar, edit it, keep the ids.
-
-Nothing throws. A malformed file, or one bad rule inside a good file, is named in the log and
-skipped; the rest of the file still loads. `/processsearch stats` reports how many rules ended up
-active, so a file that failed to parse is visible rather than silent.
-
-The `dyeCategoryIds` and `dyeRecipePatterns` config keys still work — they are translated into
-rules at load, so `~dye` is now an ordinary rule rather than a special case in the index build.
-
-## Finding a route
-
-The three prefixes answer lookups — what makes a thing, what consumes it, what machine runs the
-process — and the tree extends those one hop at a time. Neither answers the question you actually
-have in a pack this size, which is a *path*:
-
-> I have copper. I want a Precision Mechanism. What do I build?
-
-Hover what you have and press **shift+R**. Hover what you want and press it again. The tree opens
-showing the chain between them, source at the top, target at the bottom, one machine per step.
-Pressing it twice on the same item cancels.
-
-Searching runs from **both ends at once**. A recipe graph branches hard in either direction, so a
-one-way search to depth eight is the branching factor to the eighth; meeting in the middle is two
-searches to depth four. It always expands whichever frontier is smaller, which matters because the
-two ends are rarely alike — an iron ingot is consumed by hundreds of recipes and produced by three.
-
-Routes are shortest-by-step-count, which reads as *fewest machines*. That is the honest default: the
-mod is client-only and cannot know what you have unlocked, so it will not pretend to rank by
-difficulty.
-
-### The machine filter works differently here
-
-For the tree, `treeIncludedCategories` is opt-in and starts empty, because a walk fans out
-exponentially and needs an allowlist to stay finite.
-
-For routes it is a **preference**, not a gate. Equally short routes are broken in favour of the
-machines you ticked, but a route may use anything. A targeted search is already bounded by its node
-budget, and defaulting a fresh install to "no machines enabled" would mean routing found nothing at
-all.
-
-Set `routeRespectCategoryFilter` to make it a hard constraint — *"route using only what I have
-built"* — which is the version you want once a pack is underway and you know you have Create but
-not Modern Industrialization.
-
-### Exploring off the route
-
-A route is an answer, not a dead end. Clicking a step expands it outward exactly like the tree
-does, with the route still on screen as the spine — so you can see what else that intermediate
-feeds, or what else could have made it, without losing the path you came for. Right-click still
-starts a fresh tree from any node.
-
-The machine a step already uses is not drawn twice when you expand it; the route's own choice stays
-as the single recipe that routes.
-
-### When there is no route
-
-Four different things can stop the search, they need different answers, and the mod says which:
-
-| What it says | What it means |
-|---|---|
-| *no path* | The reachable set was exhausted. Nothing connects them. |
-| *too far* | A route may exist, but longer than `routeMaxSteps`. |
-| *search too wide* | `routeMaxNodes` was spent first. |
-| *took too long* | `routeMaxMillis` was spent first. |
-
-Reporting "no route" when the truth is "not within eight steps" would send you looking for a path
-you already have, which is why they are kept apart.
-
-A failed search still opens the screen, because that is where the **Deeper** button is. It retries
-with all three budgets raised — four more steps, double the nodes, double the time — and you can
-press it again. There is a fixed ceiling it will not pass: retrying is what makes a step cap
-survivable, but an unbounded retry is just a hang with extra clicks.
-
-### Why the budget is a clock
-
-`routeMaxSteps` bounds the *answer*: past a handful of machines a route stops being advice.
-
-`routeMaxMillis` bounds the *search*, and it is the one that keeps a hitch off the frame. Steps and
-node counts are both poor proxies for cost, because what a single node costs to expand depends
-entirely on how tag-heavy the pack is — one recipe taking a large tag hands back dozens of
-predecessors at once. Counting items does not see that; the clock does.
+Anything else, without a line of code — see [Writing facet rules](#writing-facet-rules).
 
 ## Filtering recipe pages
 
@@ -493,6 +375,146 @@ the whole session. Raise these if a `+N` chip is hiding something you wanted.
 An item already in the graph links back with `↺` instead of branching again, which is what stops
 cobblestone → stone → cobblestone running forever.
 
+## One step, several machines
+
+Packs offer the same step three or four ways — a Macerator, a set of Crushing Wheels and
+somebody's Pulveriser all turn an ore into dust. Drawn as separate steps that reads as several
+decisions when it is one, and picking one silently hides that there was a choice.
+
+Machines that take the same things in and give the same thing out are drawn as one block,
+three across and three down, ranked by how many recipes each machine's category holds — a
+category with a thousand recipes is how the pack generally does this, a two-recipe category is
+usually a one-off. Past nine the rest become a `+N` chip that opens the full list.
+
+Only the first machine of a block carries the subtree below it. The others lead to exactly the
+same items by definition, so drawing their branches would be the same picture two or three
+times over.
+
+This applies to the tree, to routes and to plans, because the test is the same in all three:
+two machines are interchangeable when they lead to the same items.
+
+## Finding a route
+
+The three prefixes answer lookups — what makes a thing, what consumes it, what machine runs the
+process — and the tree extends those one hop at a time. Neither answers the question you actually
+have in a pack this size, which is a *path*:
+
+> I have copper. I want a Precision Mechanism. What do I build?
+
+Hover what you have and press **shift+R**. Hover what you want and press it again. The tree opens
+showing the chain between them, source at the top, target at the bottom, one machine per step.
+Pressing it twice on the same item cancels.
+
+Searching runs from **both ends at once**. A recipe graph branches hard in either direction, so a
+one-way search to depth eight is the branching factor to the eighth; meeting in the middle is two
+searches to depth four. It always expands whichever frontier is smaller, which matters because the
+two ends are rarely alike — an iron ingot is consumed by hundreds of recipes and produced by three.
+
+Routes are shortest-by-step-count, which reads as *fewest machines*. That is the honest default: the
+mod is client-only and cannot know what you have unlocked, so it will not pretend to rank by
+difficulty.
+
+### The machine filter works differently here
+
+For the tree, `treeIncludedCategories` is opt-in and starts empty, because a walk fans out
+exponentially and needs an allowlist to stay finite.
+
+For routes it is a **preference**, not a gate. Equally short routes are broken in favour of the
+machines you ticked, but a route may use anything. A targeted search is already bounded by its node
+budget, and defaulting a fresh install to "no machines enabled" would mean routing found nothing at
+all.
+
+Set `routeRespectCategoryFilter` to make it a hard constraint — *"route using only what I have
+built"* — which is the version you want once a pack is underway and you know you have Create but
+not Modern Industrialization.
+
+### Exploring off the route
+
+A route is an answer, not a dead end. Clicking a step expands it outward exactly like the tree
+does, with the route still on screen as the spine — so you can see what else that intermediate
+feeds, or what else could have made it, without losing the path you came for. Right-click still
+starts a fresh tree from any node.
+
+The machine a step already uses is not drawn twice when you expand it; the route's own choice stays
+as the single recipe that routes.
+
+### When there is no route
+
+Four different things can stop the search, they need different answers, and the mod says which:
+
+| What it says | What it means |
+|---|---|
+| *no path* | The reachable set was exhausted. Nothing connects them. |
+| *too far* | A route may exist, but longer than `routeMaxSteps`. |
+| *search too wide* | `routeMaxNodes` was spent first. |
+| *took too long* | `routeMaxMillis` was spent first. |
+
+Reporting "no route" when the truth is "not within eight steps" would send you looking for a path
+you already have, which is why they are kept apart.
+
+A failed search still opens the screen, because that is where the **Deeper** button is. It retries
+with all three budgets raised — four more steps, double the nodes, double the time — and you can
+press it again. There is a fixed ceiling it will not pass: retrying is what makes a step cap
+survivable, but an unbounded retry is just a hang with extra clicks.
+
+### Why the budget is a clock
+
+`routeMaxSteps` bounds the *answer*: past a handful of machines a route stops being advice.
+
+`routeMaxMillis` bounds the *search*, and it is the one that keeps a hitch off the frame. Steps and
+node counts are both poor proxies for cost, because what a single node costs to expand depends
+entirely on how tag-heavy the pack is — one recipe taking a large tag hands back dozens of
+predecessors at once. Counting items does not see that; the clock does.
+
+## Build plans
+
+A route is one thread through a fabric of requirements. It reads *copper, then mixing, then
+pressing* — but the mixing step also wants zinc, and the pressing step wants a press you have
+not built.
+
+Press **shift+P** over an item and you get the whole cloth: every prerequisite, resolved down
+to things nothing makes — ores, mob drops, worldgen — plus the list of machines to build and
+materials to gather.
+
+Plans stop at raw resources and never at your inventory, deliberately. A plan that also
+stopped at whatever you happened to be carrying would change every time you picked something
+up, and a plan you cannot work from twice is not a plan.
+
+### Reading one: all, not any
+
+This is the one thing to get right. In the process tree, the items under a machine are
+**alternatives** — any of these. In a plan they are **requirements** — all of these. Same
+picture, opposite meaning.
+
+So a plan's machines are drawn in their own colour and labelled `all 3`, and their tooltip
+says how many of the items above are needed. Machines under an *item* still read as
+alternatives, because that part has not changed: an item is an OR over the recipes that make
+it, a recipe is an AND over its inputs.
+
+### The Plan button
+
+The tree is the reasoning; the summary is the answer. It lists the distinct machines to build,
+the raw materials to gather, and anything the search could not work out — which is what you
+would actually work from. Clicking a material plans *it* in turn.
+
+An item needed in several branches is marked `×2`. In a plan that is the most useful thing on
+the screen: it is what to automate first.
+
+### When a plan stops short
+
+Unlike a route, a plan usually fails *partly* — most of the tree resolved and one branch did
+not — so it shows what it got and marks where it stopped rather than discarding the lot.
+
+| | |
+|---|---|
+| *Nothing connects them* | no combination of recipes reaches anything obtainable |
+| *deeper than N tiers* | `planMaxDepth` ran out |
+| *search too wide* | `planMaxNodes` ran out |
+| *took too long* | `planMaxMillis` ran out |
+
+The last three offer **Deeper**, which retries with all three budgets raised and stops at a
+fixed ceiling — the same bargain routing makes.
+
 ## What this does *not* do
 
 Exclusion is set subtraction over items. If an item is produced by *both* a trim recipe and an
@@ -500,6 +522,89 @@ ordinary one, `-~trim` still excludes it.
 
 Items are keyed by their `Item`, not by `ItemStack`, so NBT variants collapse into one entry. That
 is the right trade for automation questions and is why the index stays small.
+
+## Writing facet rules
+
+The two hand-written sources above exist because Create's heat condition and MI's EU cost are
+*fields*, and reading a field means compiling against the mod. That is a fine trade for two mods
+and a bad one for four hundred: each new one would cost a vendored jar, a build change, a
+mod-loaded gate and a config toggle — and a *pack* could never add a facet at all, only a mod
+release could.
+
+So everything else is data. Drop a `.json` file in `config/processsearch/facet_rules/` and it is
+picked up on the next `/processsearch rebuild`. No compile dependency, no jar, no restart.
+
+```json
+{
+  "rules": [
+    {
+      "id": "techreborn_powered",
+      "categoryNamespace": "techreborn",
+      "tokens": ["powered"]
+    },
+    {
+      "id": "big_smelt",
+      "recipeClass": "net.minecraft.world.item.crafting.AbstractCookingRecipe",
+      "inputCount": { "min": 2 },
+      "tokens": ["bulk_cooking"]
+    },
+    {
+      "id": "fan_dye",
+      "categoryId": ["create_dragons_plus:fan_coloring"],
+      "recipeIdPattern": "_dye$",
+      "tokens": ["dye"],
+      "itemClasses": ["dye"]
+    }
+  ]
+}
+```
+
+Every condition is optional and they are **ANDed**; within one condition a list is an OR. A rule
+with no condition at all is refused, because it would tag every recipe in the pack.
+
+| Field | Shape | Matches |
+|---|---|---|
+| `categoryId` | string or list | the full `namespace:path`, exactly |
+| `categoryNamespace` | string or list | every category of that mod |
+| `recipeIdPattern` | regex | searched against the recipe id, not anchored |
+| `recipeClass` | fully-qualified name | the backing recipe's type |
+| `matchSubclasses` | bool, default `true` | walks superclasses *and* interfaces |
+| `requiresFluidInput` / `requiresFluidOutput` | bool | `true` demands a fluid, `false` forbids one |
+| `inputCount` / `outputCount` | `2` or `{"min":1,"max":3}` | ingredient **slots**, so a tag counts once |
+
+and emits:
+
+| Field | Effect |
+|---|---|
+| `tokens` | facet tokens, reachable through `>`, `<` and `*` |
+| `itemClasses` | `~` classes hung on the recipe's **outputs** |
+
+Tokens go through the same sanitiser as every other facet, so `"Heated Mixing"` becomes
+`heated_mixing` and stays typeable — EMI splits its search box on whitespace and `|`.
+
+### Why matching on the class is the useful part
+
+`recipeClass` walks the whole type hierarchy by **name**. One rule naming Create's
+`ProcessingRecipe` therefore reaches mixing, crushing, milling, pressing, every fan process, and
+every Create addon built on the same base — the same reach `instanceof` gives `CreateFacets`,
+without the class ever being on our classpath.
+
+Nothing here reads a field or calls a method on a recipe. That is the deliberate limit: a rule
+cannot ask what a recipe's EU cost *is*, only what kind of thing it is. In exchange, a rule written
+for a mod you do not have installed cannot throw — the worst it can do is fail to match.
+
+### Precedence
+
+Bundled defaults load first, then `config/processsearch/facet_rules/` in filename order. A rule
+reusing an earlier rule's `id` replaces it outright, which is how you override a bundled default
+rather than fighting it. Copy the file out of the jar, edit it, keep the ids.
+
+Nothing throws. A malformed file, or one bad rule inside a good file, is named in the log and
+skipped; the rest of the file still loads. `/processsearch stats` reports how many rules ended up
+active, so a file that failed to parse is visible rather than silent.
+
+The `dyeCategoryIds` and `dyeRecipePatterns` config keys still work — they are translated into
+rules at load, so `~dye` is now an ordinary rule rather than a special case in the index build.
 
 ## When the index builds
 
@@ -540,12 +645,14 @@ budget is doing its job.
 /processsearch rebuild          reload the config, then drop and rebuild the index
 ```
 
+`compat` is the answer to *"it stopped working and I don't know why"* — see below.
+
 `gaps` is the counterpart to `facets`: that one says what the pack *can* be asked, this one says
 what it cannot. It lists, biggest first, every category whose recipes contributed nothing but the
 category's own name — which is precisely the shortlist of mods a [facet rule](#writing-facet-rules)
 would be worth writing for. In a pack this size that list is not guessable, so it is measured.
 
-### When EMI moves
+## When EMI moves
 
 This mod hooks EMI **internals**, not published API: the private `EmiApi.setPages`,
 `EmiSearch$CompiledQuery.addQuery`, `EmiScreenManager`'s key handling, the tooltip helper. The mixin
@@ -644,7 +751,7 @@ keeps the config screen honest; against a pack on Cloth 12 it would need rebuild
 ./gradlew build
 ```
 
-Then copy `build/libs/processsearch-0.3.0.jar` into the pack's `mods/` folder.
+Then copy `build/libs/processsearch-0.4.0.jar` into the pack's `mods/` folder.
 
 Notes on the toolchain, both of which cost an afternoon if you find them the hard way:
 

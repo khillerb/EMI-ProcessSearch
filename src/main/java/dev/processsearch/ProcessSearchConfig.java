@@ -50,7 +50,7 @@ public final class ProcessSearchConfig {
      * for anyone who already has the file -- the tree caps would have stayed at their old values on
      * every existing install. Version 2 raises them.
      */
-    private static final int CONFIG_VERSION = 9;
+    private static final int CONFIG_VERSION = 10;
 
     private static final char DEFAULT_MADE_BY = '>';
     private static final char DEFAULT_USED_IN = '<';
@@ -70,7 +70,6 @@ public final class ProcessSearchConfig {
     private static final HotKey DEFAULT_CONSUMERS = new HotKey(GLFW.GLFW_KEY_COMMA, true, false, false);
     private static final HotKey DEFAULT_PRODUCERS = new HotKey(GLFW.GLFW_KEY_PERIOD, true, false, false);
 
-    /** R for route. Shifted so it cannot collide with a plain letter typed into EMI's search. */
     /**
      * Ceilings the "search deeper" retry escalates towards and never passes.
      *
@@ -79,11 +78,17 @@ public final class ProcessSearchConfig {
      * where it stops.
      */
     public static final int MAX_ROUTE_STEPS = 24;
+    /** Tiers a build plan may run to. Past a dozen it stops being something anyone reads. */
+    public static final int MAX_PLAN_DEPTH = 24;
     public static final int MAX_ROUTE_NODES = 500000;
     public static final int MAX_ROUTE_MILLIS = 5000;
 
+    /** R for route, P for plan. Shifted so neither collides with typing into EMI's search. */
     private static final String DEFAULT_ROUTE_KEY = "shift+r";
     private static final HotKey DEFAULT_ROUTE = new HotKey(GLFW.GLFW_KEY_R, true, false, false);
+
+    private static final String DEFAULT_PLAN_KEY = "shift+p";
+    private static final HotKey DEFAULT_PLAN = new HotKey(GLFW.GLFW_KEY_P, true, false, false);
 
     private static final List<String> HELP = List.of(
             "Process Search -- four extra search prefixes for EMI.",
@@ -127,7 +132,15 @@ public final class ProcessSearchConfig {
             "routeMaxNodes is how many items the search may touch before giving up, and",
             "routeMaxMillis bounds it by the clock instead -- that is the one that keeps a search",
             "off the frame, since what a node costs to expand depends on how tag-heavy the pack is.",
-            "The Deeper button on the route screen retries with all three raised, up to a ceiling. routeRespectCategoryFilter turns treeIncludedCategories into a hard",
+            "The Deeper button on the route screen retries with all three raised, up to a ceiling.",
+            "Build plans: press treePlanKey over an item for everything needed to make it, resolved",
+            "down to things nothing makes -- ores, mob drops, worldgen -- plus the machines to build.",
+            "Unlike the tree, a plan's branches under a machine are ALL required, not alternatives.",
+            "planMaxDepth bounds how many tiers deep it goes; planMaxMillis bounds the search, and",
+            "the Deeper button raises both without touching this file.",
+            "Machines that do the same job -- a Macerator and Crushing Wheels both grinding an ore --",
+            "are drawn as one block of up to nine, ranked by how many recipes each machine has.",
+            "treeVisibleMachines counts those blocks rather than individual machines. routeRespectCategoryFilter turns treeIncludedCategories into a hard",
             "constraint (\"route using only the machines I have\") instead of a preference between",
             "equally short routes, which is what it is by default.");
 
@@ -166,6 +179,10 @@ public final class ProcessSearchConfig {
         String treeConsumersKey = DEFAULT_CONSUMERS_KEY;
         String treeProducersKey = DEFAULT_PRODUCERS_KEY;
         String treeRouteKey = DEFAULT_ROUTE_KEY;
+        String treePlanKey = DEFAULT_PLAN_KEY;
+        int planMaxDepth = 10;
+        int planMaxNodes = 20000;
+        int planMaxMillis = 150;
         int routeMaxSteps = 8;
         int routeMaxNodes = 20000;
         int routeMaxMillis = 100;
@@ -201,6 +218,7 @@ public final class ProcessSearchConfig {
         transient HotKey consumers = DEFAULT_CONSUMERS;
         transient HotKey producers = DEFAULT_PRODUCERS;
         transient HotKey route = DEFAULT_ROUTE;
+        transient HotKey plan = DEFAULT_PLAN;
     }
 
     private static volatile Data data = resolved(new Data());
@@ -363,6 +381,10 @@ public final class ProcessSearchConfig {
         value.consumers = HotKey.parse(value.treeConsumersKey, DEFAULT_CONSUMERS, "process tree <");
         value.producers = HotKey.parse(value.treeProducersKey, DEFAULT_PRODUCERS, "process tree >");
         value.route = HotKey.parse(value.treeRouteKey, DEFAULT_ROUTE, "process tree route");
+        value.plan = HotKey.parse(value.treePlanKey, DEFAULT_PLAN, "build plan");
+        value.planMaxDepth = Math.max(1, Math.min(MAX_PLAN_DEPTH, value.planMaxDepth));
+        value.planMaxNodes = Math.max(500, Math.min(MAX_ROUTE_NODES, value.planMaxNodes));
+        value.planMaxMillis = Math.max(10, Math.min(MAX_ROUTE_MILLIS, value.planMaxMillis));
 
         value.madeBy = prefix(value.madeByPrefix, DEFAULT_MADE_BY, "made by");
         value.usedIn = prefix(value.usedInPrefix, DEFAULT_USED_IN, "used in");
@@ -405,6 +427,16 @@ public final class ProcessSearchConfig {
             // Widening again: the icons now grow most of the way to holding their size on screen,
             // so the useful part of the zoom range is further out than 0.15 could reach.
             value.treeMinZoom = Math.min(value.treeMinZoom, 0.08);
+        }
+        if (value.configVersion < 10) {
+            // New in 10; an older file has these at zero, which the clamps would read as a
+            // one-tier plan with a 500-node, 10ms budget -- technically valid and useless.
+            value.planMaxDepth = Math.max(value.planMaxDepth, 10);
+            value.planMaxNodes = Math.max(value.planMaxNodes, 20000);
+            value.planMaxMillis = Math.max(value.planMaxMillis, 150);
+            if (value.treePlanKey == null || value.treePlanKey.isBlank()) {
+                value.treePlanKey = DEFAULT_PLAN_KEY;
+            }
         }
         if (value.configVersion < 9) {
             // New in 9; an older file has it at zero, which the clamp would read as 10ms.
@@ -493,6 +525,10 @@ public final class ProcessSearchConfig {
         public String treeConsumersKey;
         public String treeProducersKey;
         public String treeRouteKey;
+        public String treePlanKey;
+        public int planMaxDepth;
+        public int planMaxNodes;
+        public int planMaxMillis;
         public int routeMaxSteps;
         public int routeMaxNodes;
         public int routeMaxMillis;
@@ -532,6 +568,10 @@ public final class ProcessSearchConfig {
         d.treeConsumersKey = current.treeConsumersKey;
         d.treeProducersKey = current.treeProducersKey;
         d.treeRouteKey = current.treeRouteKey;
+        d.treePlanKey = current.treePlanKey;
+        d.planMaxDepth = current.planMaxDepth;
+        d.planMaxNodes = current.planMaxNodes;
+        d.planMaxMillis = current.planMaxMillis;
         d.routeMaxSteps = current.routeMaxSteps;
         d.routeMaxNodes = current.routeMaxNodes;
         d.routeMaxMillis = current.routeMaxMillis;
@@ -576,6 +616,10 @@ public final class ProcessSearchConfig {
         next.treeConsumersKey = d.treeConsumersKey;
         next.treeProducersKey = d.treeProducersKey;
         next.treeRouteKey = d.treeRouteKey;
+        next.treePlanKey = d.treePlanKey;
+        next.planMaxDepth = d.planMaxDepth;
+        next.planMaxNodes = d.planMaxNodes;
+        next.planMaxMillis = d.planMaxMillis;
         next.routeMaxSteps = d.routeMaxSteps;
         next.routeMaxNodes = d.routeMaxNodes;
         next.routeMaxMillis = d.routeMaxMillis;
@@ -684,6 +728,25 @@ public final class ProcessSearchConfig {
     /** {@code >} -- what are all the ways to produce this. */
     public static HotKey treeProducersKey() {
         return data.producers;
+    }
+
+    /** The key that builds a plan for whatever is hovered. */
+    public static HotKey treePlanKey() {
+        return data.plan;
+    }
+
+    /** Tiers a build plan may run to. Bounds the answer, the way routeMaxSteps does. */
+    public static int planMaxDepth() {
+        return data.planMaxDepth;
+    }
+
+    public static int planMaxNodes() {
+        return data.planMaxNodes;
+    }
+
+    /** Wall clock a plan may spend. Bounds the search, and is what protects the frame. */
+    public static int planMaxMillis() {
+        return data.planMaxMillis;
     }
 
     /** The key that anchors a route, then runs it. */

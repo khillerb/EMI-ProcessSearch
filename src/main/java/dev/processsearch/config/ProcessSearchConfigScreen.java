@@ -122,6 +122,25 @@ public final class ProcessSearchConfigScreen {
                         Component.literal("Pressing twice on the same item cancels."))
                 .setSaveConsumer(v -> draft.treeRouteKey = v)
                 .build());
+        category.addEntry(entry.startIntSlider(Component.literal("Plan: max tiers"),
+                        draft.planMaxDepth, 1, 24)
+                .setDefaultValue(10)
+                .setTooltip(Component.literal("How many tiers of prerequisites a plan resolves."),
+                        Component.literal("Deeper on the plan screen raises it without editing this."))
+                .setSaveConsumer(v -> draft.planMaxDepth = v)
+                .build());
+        category.addEntry(entry.startIntSlider(Component.literal("Plan: time budget (ms)"),
+                        draft.planMaxMillis, 10, 5000)
+                .setDefaultValue(150)
+                .setSaveConsumer(v -> draft.planMaxMillis = v)
+                .build());
+        category.addEntry(entry.startIntField(Component.literal("Plan: search budget"),
+                        draft.planMaxNodes)
+                .setMin(500).setMax(500000)
+                .setDefaultValue(20000)
+                .setSaveConsumer(v -> draft.planMaxNodes = v)
+                .build());
+
         category.addEntry(entry.startIntSlider(Component.literal("Route: max steps"),
                         draft.routeMaxSteps, 1, 24)
                 .setDefaultValue(8)
@@ -160,9 +179,11 @@ public final class ProcessSearchConfigScreen {
                         Component.literal("Odd numbers only; even ones round down."))
                 .setSaveConsumer(v -> draft.treeViewLayers = v)
                 .build());
-        category.addEntry(entry.startIntSlider(Component.literal("Machines drawn at the focus"),
+        category.addEntry(entry.startIntSlider(Component.literal("Machine groups at the focus"),
                         draft.treeVisibleMachines, 1, 64)
                 .setDefaultValue(12)
+                .setTooltip(Component.literal("Machines that do the same job count as one group"),
+                        Component.literal("and are drawn as a block, so this is groups, not boxes."))
                 .setSaveConsumer(v -> draft.treeVisibleMachines = v)
                 .build());
         category.addEntry(entry.startIntSlider(Component.literal("Items drawn per machine"),
@@ -174,6 +195,7 @@ public final class ProcessSearchConfigScreen {
         category.addEntry(entry.startIntSlider(Component.literal("Nodes drawn per deeper layer"),
                         draft.treeVisiblePerLayer, 2, 200)
                 .setDefaultValue(72)
+                .setTooltip(Component.literal("Raise this if the layers past the focus feel sparse."))
                 .setSaveConsumer(v -> draft.treeVisiblePerLayer = v)
                 .build());
         category.addEntry(entry.startIntSlider(Component.literal("Minimum zoom (percent)"),

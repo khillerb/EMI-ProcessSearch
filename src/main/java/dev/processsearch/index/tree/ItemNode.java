@@ -32,6 +32,14 @@ public final class ItemNode {
     /** Set when the search box's positive terms match this item; drives the tint and draw order. */
     boolean matchesFilter;
 
+    /**
+     * A build plan gave up on this one -- too deep, or the search ran out of budget.
+     *
+     * <p>Kept as a node rather than pruned, because a plan that mostly worked is worth reading and
+     * the honest thing is to show where it stops rather than quietly ending a branch early.
+     */
+    boolean unresolved;
+
     ItemNode(Object key, EmiStack stack, int depth) {
         this.key = key;
         this.stack = stack;
@@ -65,6 +73,11 @@ public final class ItemNode {
     /** True when this node has never been walked, so following it will reveal something new. */
     public boolean canExpand() {
         return !expanded;
+    }
+
+    /** True when a plan stopped here without working out how to make it. */
+    public boolean isUnresolved() {
+        return unresolved;
     }
 
     @Override
